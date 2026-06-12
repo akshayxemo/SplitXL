@@ -131,3 +131,16 @@
     @apply font-sans;
     }
 }
+
+@media print {
+  aside,
+  header,
+  nav,
+  button {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+}
