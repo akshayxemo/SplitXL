@@ -12,7 +12,7 @@ export const HomePage = () => {
       <main className="container mx-auto flex min-h-screen flex-col items-center justify-center px-6 py-12">
         <LogoPlaceholder
           src="/logo-horizontal.png"
-          className="mb-8 h-24 md:h-28"
+          className="mb-8 h-18 md:h-28"
         />
 
         <div className="max-w-3xl text-center">
