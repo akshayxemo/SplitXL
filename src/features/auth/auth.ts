@@ -1,4 +1,5 @@
 import type { AuthUser } from "@/lib/db"
+import { syncAuthAccount } from "@/lib/db-migrate"
 import { useAuthStore } from "@/stores/auth.store"
 
 export function generateDeviceId(): string {
@@ -19,20 +20,36 @@ export function validateDisplayName(name: string): string | null {
   return null
 }
 
-export function createGuestUser(displayName: string): AuthUser {
-  const existing = useAuthStore.getState().user
-
+export function normalizeAuthUser(user: AuthUser): AuthUser {
+  const accountId = user.accountId ?? user.userId ?? crypto.randomUUID()
   return {
-    userId: existing?.userId ?? crypto.randomUUID(),
-    deviceId: existing?.deviceId ?? generateDeviceId(),
-    displayName: displayName.trim(),
+    accountId,
+    deviceId: user.deviceId,
+    displayName: user.displayName,
   }
 }
 
-export function updateDisplayName(displayName: string): AuthUser | null {
+export async function createGuestUser(displayName: string): Promise<AuthUser> {
+  const existing = useAuthStore.getState().user
+  const accountId = existing?.accountId ?? existing?.userId ?? crypto.randomUUID()
+
+  const user: AuthUser = {
+    accountId,
+    deviceId: existing?.deviceId ?? generateDeviceId(),
+    displayName: displayName.trim(),
+  }
+
+  await syncAuthAccount(user.accountId, user.displayName)
+  return user
+}
+
+export async function updateDisplayName(displayName: string): Promise<AuthUser | null> {
   const user = useAuthStore.getState().user
   if (!user) return null
   const error = validateDisplayName(displayName)
   if (error) throw new Error(error)
-  return { ...user, displayName: displayName.trim() }
+  const normalized = normalizeAuthUser(user)
+  const updated = { ...normalized, displayName: displayName.trim() }
+  await syncAuthAccount(updated.accountId, updated.displayName)
+  return updated
 }

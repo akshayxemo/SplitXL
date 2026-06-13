@@ -1,24 +1,22 @@
-import type {
-  GroupExpense,
-  GroupMember,
-  SettlementRecord,
-  SimplifiedDebt,
-  SplitData,
-} from "@/lib/db"
+import type { Transaction, GroupMember, SplitData } from "@/lib/db"
 import { sumPaise } from "@/lib/money"
 
 export function computeShares(
-  expense: GroupExpense,
+  transaction: Transaction,
   members: GroupMember[]
 ): Record<string, number> {
   const activeMembers = members.filter((m) => m.isActive)
   const shares: Record<string, number> = {}
 
   for (const member of activeMembers) {
-    shares[member.userId] = 0
+    shares[member.id] = 0
   }
 
-  const { amountPaise, splitData } = expense
+  if (transaction.type === "settlement_payment" || !transaction.splitData) {
+    return shares
+  }
+
+  const { amountPaise, splitData } = transaction
 
   switch (splitData.method) {
     case "equal_all": {
@@ -26,27 +24,25 @@ export function computeShares(
       const perPerson = Math.floor(amountPaise / activeMembers.length)
       let remainder = amountPaise - perPerson * activeMembers.length
       for (const member of activeMembers) {
-        shares[member.userId] = perPerson + (remainder > 0 ? 1 : 0)
+        shares[member.id] = perPerson + (remainder > 0 ? 1 : 0)
         if (remainder > 0) remainder--
       }
       break
     }
     case "equal_selected": {
-      const selected = activeMembers.filter((m) =>
-        splitData.memberIds.includes(m.userId)
-      )
+      const selected = activeMembers.filter((m) => splitData.memberIds.includes(m.id))
       if (selected.length === 0) return shares
       const perPerson = Math.floor(amountPaise / selected.length)
       let remainder = amountPaise - perPerson * selected.length
       for (const member of selected) {
-        shares[member.userId] = perPerson + (remainder > 0 ? 1 : 0)
+        shares[member.id] = perPerson + (remainder > 0 ? 1 : 0)
         if (remainder > 0) remainder--
       }
       break
     }
     case "manual": {
-      for (const [userId, amount] of Object.entries(splitData.shares)) {
-        if (userId in shares) shares[userId] = amount
+      for (const [memberId, amount] of Object.entries(splitData.shares)) {
+        if (memberId in shares) shares[memberId] = amount
       }
       break
     }
@@ -54,13 +50,13 @@ export function computeShares(
       const entries = Object.entries(splitData.shares)
       let allocated = 0
       for (let i = 0; i < entries.length; i++) {
-        const [userId, pct] = entries[i]
-        if (!(userId in shares)) continue
+        const [memberId, pct] = entries[i]
+        if (!(memberId in shares)) continue
         if (i === entries.length - 1) {
-          shares[userId] = amountPaise - allocated
+          shares[memberId] = amountPaise - allocated
         } else {
           const share = Math.round((amountPaise * pct) / 100)
-          shares[userId] = share
+          shares[memberId] = share
           allocated += share
         }
       }
@@ -71,42 +67,65 @@ export function computeShares(
   return shares
 }
 
+function applyTransactionToBalances(
+  transaction: Transaction,
+  members: GroupMember[],
+  balances: Record<string, number>
+): void {
+  if (transaction.type === "settlement_payment") {
+    const from = transaction.settlementFromMemberId ?? transaction.paidByMemberId
+    const to = transaction.settlementToMemberId
+    if (from && to) {
+      balances[from] = (balances[from] ?? 0) + transaction.amountPaise
+      balances[to] = (balances[to] ?? 0) - transaction.amountPaise
+    }
+    return
+  }
+
+  const shares = computeShares(transaction, members)
+  const sign = transaction.type === "refund" ? -1 : 1
+  const amount = transaction.amountPaise * sign
+
+  balances[transaction.paidByMemberId] =
+    (balances[transaction.paidByMemberId] ?? 0) + amount
+
+  for (const [memberId, share] of Object.entries(shares)) {
+    balances[memberId] = (balances[memberId] ?? 0) - share * sign
+  }
+}
+
 export function computeNetBalances(
-  expenses: GroupExpense[],
+  transactions: Transaction[],
   members: GroupMember[]
 ): Record<string, number> {
   const balances: Record<string, number> = {}
 
   for (const member of members.filter((m) => m.isActive)) {
-    balances[member.userId] = 0
+    balances[member.id] = 0
   }
 
-  for (const expense of expenses) {
-    const shares = computeShares(expense, members)
-    balances[expense.paidByUserId] =
-      (balances[expense.paidByUserId] ?? 0) + expense.amountPaise
-
-    for (const [userId, share] of Object.entries(shares)) {
-      balances[userId] = (balances[userId] ?? 0) - share
-    }
+  for (const transaction of transactions) {
+    applyTransactionToBalances(transaction, members, balances)
   }
 
   return balances
 }
 
-export function simplifyDebts(balances: Record<string, number>): SimplifiedDebt[] {
-  const creditors: { userId: string; amount: number }[] = []
-  const debtors: { userId: string; amount: number }[] = []
+export function simplifyDebts(
+  balances: Record<string, number>
+): { fromMemberId: string; toMemberId: string; amountPaise: number }[] {
+  const creditors: { memberId: string; amount: number }[] = []
+  const debtors: { memberId: string; amount: number }[] = []
 
-  for (const [userId, balance] of Object.entries(balances)) {
-    if (balance > 0) creditors.push({ userId, amount: balance })
-    else if (balance < 0) debtors.push({ userId, amount: -balance })
+  for (const [memberId, balance] of Object.entries(balances)) {
+    if (balance > 0) creditors.push({ memberId, amount: balance })
+    else if (balance < 0) debtors.push({ memberId, amount: -balance })
   }
 
   creditors.sort((a, b) => b.amount - a.amount)
   debtors.sort((a, b) => b.amount - a.amount)
 
-  const debts: SimplifiedDebt[] = []
+  const debts: { fromMemberId: string; toMemberId: string; amountPaise: number }[] = []
   let i = 0
   let j = 0
 
@@ -114,8 +133,8 @@ export function simplifyDebts(balances: Record<string, number>): SimplifiedDebt[
     const amount = Math.min(debtors[i].amount, creditors[j].amount)
     if (amount > 0) {
       debts.push({
-        fromUserId: debtors[i].userId,
-        toUserId: creditors[j].userId,
+        fromMemberId: debtors[i].memberId,
+        toMemberId: creditors[j].memberId,
         amountPaise: amount,
       })
     }
@@ -126,31 +145,6 @@ export function simplifyDebts(balances: Record<string, number>): SimplifiedDebt[
   }
 
   return debts
-}
-
-export function applyPaidSettlements(
-  debts: SimplifiedDebt[],
-  paidRecords: SettlementRecord[]
-): SimplifiedDebt[] {
-  const remaining = debts.map((d) => ({ ...d }))
-
-  for (const record of paidRecords.filter((r) => r.status === "paid")) {
-    let left = record.amountPaise
-    for (const debt of remaining) {
-      if (
-        left <= 0 ||
-        debt.fromUserId !== record.fromUserId ||
-        debt.toUserId !== record.toUserId
-      ) {
-        continue
-      }
-      const applied = Math.min(debt.amountPaise, left)
-      debt.amountPaise -= applied
-      left -= applied
-    }
-  }
-
-  return remaining.filter((d) => d.amountPaise > 0)
 }
 
 export function validateSplitData(
@@ -187,9 +181,12 @@ export function validateSplitData(
   }
 }
 
-export function getMemberDisplayName(
-  members: GroupMember[],
-  userId: string
-): string {
-  return members.find((m) => m.userId === userId)?.displayName ?? userId
+export function getMemberDisplayName(members: GroupMember[], memberId: string): string {
+  return members.find((m) => m.id === memberId)?.displayName ?? memberId
+}
+
+export function sumExpenseTransactions(transactions: Transaction[]): number {
+  return transactions
+    .filter((t) => t.type === "expense")
+    .reduce((sum, t) => sum + t.amountPaise, 0)
 }

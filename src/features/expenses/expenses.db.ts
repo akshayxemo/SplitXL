@@ -25,7 +25,7 @@ export async function addPersonalExpense(
 
 export async function updatePersonalExpense(
   id: string,
-  changes: Partial<Omit<PersonalExpense, "id" | "ownerUserId" | "createdAt">>
+  changes: Partial<Omit<PersonalExpense, "id" | "ownerAccountId" | "createdAt">>
 ): Promise<void> {
   await db.personalExpenses.update(id, { ...changes, updatedAt: new Date().toISOString() })
 }
@@ -35,12 +35,12 @@ export async function deletePersonalExpense(id: string): Promise<void> {
 }
 
 export async function getPersonalExpenses(
-  ownerUserId: string,
+  ownerAccountId: string,
   filters: ExpenseFilters = {}
 ): Promise<PersonalExpense[]> {
   let expenses = await db.personalExpenses
-    .where("ownerUserId")
-    .equals(ownerUserId)
+    .where("ownerAccountId")
+    .equals(ownerAccountId)
     .toArray()
 
   if (filters.categoryId) {
@@ -73,9 +73,7 @@ export function sumExpenses(expenses: PersonalExpense[]): number {
   return expenses.reduce((sum, e) => sum + e.amountPaise, 0)
 }
 
-export function groupByCategory(
-  expenses: PersonalExpense[]
-): Record<string, number> {
+export function groupByCategory(expenses: PersonalExpense[]): Record<string, number> {
   const map: Record<string, number> = {}
   for (const e of expenses) {
     map[e.categoryId] = (map[e.categoryId] ?? 0) + e.amountPaise
@@ -103,4 +101,8 @@ export function getMonthRange(monthStr: string): { start: string; end: string } 
 
 export function parseExpenseDate(date: string): Date {
   return parseISO(date)
+}
+
+export function dateToTransactionDateTime(date: string, time = "12:00"): string {
+  return new Date(`${date}T${time}:00`).toISOString()
 }

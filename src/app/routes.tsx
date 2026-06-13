@@ -19,6 +19,12 @@ const GroupsPage = lazy(() =>
 const GroupDetailPage = lazy(() =>
   import("@/features/groups/GroupDetailPage").then((m) => ({ default: m.GroupDetailPage }))
 )
+const FriendsPage = lazy(() =>
+  import("@/features/friends/FriendsPage").then((m) => ({ default: m.FriendsPage }))
+)
+const InsightsPage = lazy(() =>
+  import("@/features/insights/InsightsPage").then((m) => ({ default: m.InsightsPage }))
+)
 const ReportsPage = lazy(() =>
   import("@/features/reports/ReportsPage").then((m) => ({ default: m.ReportsPage }))
 )
@@ -68,8 +74,10 @@ export function AppRoutes() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/categories" element={<CategoriesPage />} />
+          <Route path="/friends" element={<FriendsPage />} />
           <Route path="/groups" element={<GroupsPage />} />
           <Route path="/groups/:id" element={<GroupDetailPage />} />
+          <Route path="/insights" element={<InsightsPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

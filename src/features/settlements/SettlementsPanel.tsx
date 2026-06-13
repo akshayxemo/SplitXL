@@ -2,38 +2,59 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import type { GroupExpense, GroupMember } from "@/lib/db"
+import { ConfirmationModal } from "@/components/ConfirmationModal"
+import type { GroupMember, Transaction } from "@/lib/db"
+import { getGroupOrThrow } from "@/lib/group-guards"
 import { formatINR } from "@/lib/money"
 import {
-  applyPaidSettlements,
   computeNetBalances,
   getMemberDisplayName,
   simplifyDebts,
 } from "@/lib/settlement"
-import { getPaidSettlements, getSettlementHistory, markSettlementPaid } from "@/features/settlements/settlements.db"
+import { cancelSettlement, startSettlement } from "@/features/groups/groups.db"
+import { getSettlementHistory, markSettlementPaid } from "@/features/settlements/settlements.db"
+import { useState } from "react"
 
 interface SettlementsPanelProps {
   groupId: string
   members: GroupMember[]
-  expenses: GroupExpense[]
+  transactions: Transaction[]
 }
 
-export function SettlementsPanel({ groupId, members, expenses }: SettlementsPanelProps) {
+export function SettlementsPanel({ groupId, members, transactions }: SettlementsPanelProps) {
+  const [confirmStart, setConfirmStart] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+
   const settlementData = useLiveQuery(async () => {
-    const [paid, history] = await Promise.all([
-      getPaidSettlements(groupId),
+    const [group, history] = await Promise.all([
+      getGroupOrThrow(groupId),
       getSettlementHistory(groupId),
     ])
-    const balances = computeNetBalances(expenses, members)
-    const debts = simplifyDebts(balances)
-    const outstanding = applyPaidSettlements(debts, paid)
-    return { outstanding, history }
-  }, [groupId, expenses, members])
+    const balances = computeNetBalances(transactions, members)
+    const outstanding = simplifyDebts(balances)
+    return { outstanding, history, group }
+  }, [groupId, transactions, members])
 
   if (!settlementData) return <p className="text-muted-foreground">Loading settlements...</p>
 
+  const { group } = settlementData
+
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {group.status === "active" && (
+          <Button onClick={() => setConfirmStart(true)}>Start Settlement</Button>
+        )}
+        {group.status === "settlement_in_progress" && (
+          <Button variant="outline" onClick={() => setConfirmCancel(true)}>
+            Cancel Settlement
+          </Button>
+        )}
+        {group.status === "settled" && (
+          <Badge variant="outline">Group is settled and read-only</Badge>
+        )}
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Outstanding Settlements</CardTitle>
@@ -44,33 +65,35 @@ export function SettlementsPanel({ groupId, members, expenses }: SettlementsPane
           ) : (
             settlementData.outstanding.map((debt) => (
               <div
-                key={`${debt.fromUserId}-${debt.toUserId}`}
+                key={`${debt.fromMemberId}-${debt.toMemberId}`}
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3"
               >
                 <p className="text-sm">
                   <span className="font-medium">
-                    {getMemberDisplayName(members, debt.fromUserId)}
+                    {getMemberDisplayName(members, debt.fromMemberId)}
                   </span>
                   {" owes "}
                   <span className="font-medium">
-                    {getMemberDisplayName(members, debt.toUserId)}
+                    {getMemberDisplayName(members, debt.toMemberId)}
                   </span>
                 </p>
                 <div className="flex items-center gap-2">
                   <Badge>{formatINR(debt.amountPaise)}</Badge>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      markSettlementPaid({
-                        groupId,
-                        fromUserId: debt.fromUserId,
-                        toUserId: debt.toUserId,
-                        amountPaise: debt.amountPaise,
-                      })
-                    }
-                  >
-                    Mark Paid
-                  </Button>
+                  {group.status === "settlement_in_progress" && (
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        markSettlementPaid({
+                          groupId,
+                          fromMemberId: debt.fromMemberId,
+                          toMemberId: debt.toMemberId,
+                          amountPaise: debt.amountPaise,
+                        })
+                      }
+                    >
+                      Mark Paid
+                    </Button>
+                  )}
                 </div>
               </div>
             ))
@@ -89,17 +112,41 @@ export function SettlementsPanel({ groupId, members, expenses }: SettlementsPane
             settlementData.history.map((record) => (
               <div key={record.id} className="flex justify-between text-sm border-b border-border pb-2">
                 <span>
-                  {getMemberDisplayName(members, record.fromUserId)} →{" "}
-                  {getMemberDisplayName(members, record.toUserId)}
+                  {getMemberDisplayName(members, record.settlementFromMemberId ?? record.paidByMemberId)}{" "}
+                  → {getMemberDisplayName(members, record.settlementToMemberId ?? "")}
                 </span>
                 <span className="text-muted-foreground">
-                  {formatINR(record.amountPaise)} · {record.paidAt?.slice(0, 10)}
+                  {formatINR(record.amountPaise)} · {record.transactionDateTime.slice(0, 10)}
                 </span>
               </div>
             ))
           )}
         </CardContent>
       </Card>
+
+      <ConfirmationModal
+        open={confirmStart}
+        onOpenChange={setConfirmStart}
+        title="Start settlement?"
+        description="This action will lock the group and prevent any future expense, refund, member, or group modifications. Settlement records remain allowed."
+        confirmLabel="Start Settlement"
+        onConfirm={async () => {
+          await startSettlement(groupId)
+          setConfirmStart(false)
+        }}
+      />
+
+      <ConfirmationModal
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title="Cancel settlement?"
+        description="Return the group to active state. This is only allowed if no settlement payments exist."
+        confirmLabel="Cancel Settlement"
+        onConfirm={async () => {
+          await cancelSettlement(groupId)
+          setConfirmCancel(false)
+        }}
+      />
     </div>
   )
 }
