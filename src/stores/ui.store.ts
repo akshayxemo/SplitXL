@@ -17,7 +17,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       theme: "system",
-      sidebarOpen: true,
+      sidebarOpen: false,
       activeGroupId: null,
       setTheme: (theme) => set({ theme }),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
