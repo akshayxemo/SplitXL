@@ -20,7 +20,7 @@ import { useAuthStore } from "@/stores/auth.store"
 import { useUIStore } from "@/stores/ui.store"
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/expenses", label: "Expenses", icon: Receipt },
   { to: "/categories", label: "Categories", icon: Tags },
   { to: "/friends", label: "Friends", icon: UserRound },
@@ -37,6 +37,14 @@ export function AppLayout() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const [confirmLogout, setConfirmLogout] = useState(false)
   const navigate = useNavigate()
+  const theme = useUIStore((s) => s.theme);
+
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  const logoSrc = isDark ? "/logo-horizontal.png" : "/logo-horizontal-dark.png";
 
   function handleLogout() {
     logout()
@@ -53,7 +61,7 @@ export function AppLayout() {
         )}
       >
         <div className="flex h-18 items-center gap-2 border-b border-border px-4 justify-center">
-          <LogoPlaceholder src="/logo-horizontal.png" />
+          <LogoPlaceholder src={logoSrc} className="h-14" />
           {/* <span className="text-lg font-semibold text-primary">SplitXL</span> */}
         </div>
 
@@ -111,7 +119,7 @@ export function AppLayout() {
           <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
             <Menu className="size-5" />
           </Button>
-          <LogoPlaceholder className="size-32" src="/logo-horizontal.png" />
+          <LogoPlaceholder className="h-10" src={logoSrc} />
         </header>
 
         <main className="flex-1 p-4 pb-20 md:p-6">
