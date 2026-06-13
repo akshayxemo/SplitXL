@@ -8,7 +8,7 @@ interface LogoPlaceholderProps {
 
 export function LogoPlaceholder({ className, src, alt = "SplitXL" }: LogoPlaceholderProps) {
   if (src) {
-    return <img src={src} alt={alt} className={cn("size-40 object-contain", className)} />
+    return <img src={src} alt={alt} className={cn("object-contain", className)} />
   }
 
   return (

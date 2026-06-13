@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { Sun, Moon, Monitor } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -19,8 +20,44 @@ import {
   parseImportFile,
   importAllData,
 } from "@/lib/export-import"
+import { applyTheme, useUIStore } from "@/stores/ui.store"
 
 type ForgetStep = "idle" | "warning" | "deleting"
+
+const themeIcons = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+} as const
+
+function ThemeToggle() {
+  const theme = useUIStore((s) => s.theme)
+  const setTheme = useUIStore((s) => s.setTheme)
+  const order = ["light", "dark", "system"] as const
+
+  function cycle() {
+    const next = order[(order.indexOf(theme) + 1) % order.length]
+    setTheme(next)
+    applyTheme(next)
+  }
+
+  const Icon = themeIcons[theme]
+  return (
+    <Button variant="ghost" size="icon-sm" onClick={cycle} aria-label="Toggle theme">
+      <Icon className="size-4" />
+    </Button>
+  )
+}
+
+function ThemeSetting() {
+  const theme = useUIStore((s) => s.theme);
+  return (
+    <div className="absolute flex items-center gap-2 top-4 right-4">
+      <span className="text-sm">Theme: {theme}</span>
+      <ThemeToggle />
+    </div>
+  );
+}
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -49,7 +86,7 @@ export function LoginPage() {
     // Restore the prior session by creating/loading the account
     const user = await createGuestUser(lastAccount.displayName)
     setUser({ ...user, accountId: lastAccount.accountId })
-    navigate("/", { replace: true })
+    navigate("/dashboard", { replace: true })
   }
 
   async function handleNewAccountSubmit(e: React.FormEvent) {
@@ -59,7 +96,7 @@ export function LoginPage() {
     setNameError(null)
     const user = await createGuestUser(displayName)
     setUser(user)
-    navigate("/", { replace: true })
+    navigate("/dashboard", { replace: true })
   }
 
   async function handleDeleteOnly() {
@@ -109,7 +146,7 @@ export function LoginPage() {
       const importedName =
         payload.account?.displayName ?? payload.data.accounts?.[0]?.displayName ?? "Imported"
       setUser({ accountId: importedAccountId, deviceId: "", displayName: importedName })
-      navigate("/", { replace: true })
+      navigate("/dashboard", { replace: true })
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Import failed.")
     } finally {
@@ -124,20 +161,26 @@ export function LoginPage() {
   if (forgetStep === "warning") {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
+        <ThemeSetting />
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Forget this account?</CardTitle>
             <CardDescription>
               This will permanently delete all data for{" "}
-              <strong>{lastAccount?.displayName}</strong> from this device. This cannot be
-              undone.
+              <strong>{lastAccount?.displayName}</strong> from this device. This
+              cannot be undone.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {forgetError && <p className="text-xs text-destructive">{forgetError}</p>}
+            {forgetError && (
+              <p className="text-xs text-destructive">{forgetError}</p>
+            )}
             <Button
               variant="outline"
-              onClick={() => { setForgetStep("idle"); setForgetError(null) }}
+              onClick={() => {
+                setForgetStep("idle");
+                setForgetError(null);
+              }}
               disabled={isDeleting}
             >
               Cancel
@@ -159,26 +202,34 @@ export function LoginPage() {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   // Recent account view
   if (lastAccount && !showNewForm) {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
+        <ThemeSetting />
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Welcome back</CardTitle>
             <CardDescription>
-              Continue as <strong>{lastAccount.displayName}</strong> or choose another option.
+              Continue as <strong>{lastAccount.displayName}</strong> or choose
+              another option.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {importError && <p className="text-xs text-destructive">{importError}</p>}
+            {importError && (
+              <p className="text-xs text-destructive">{importError}</p>
+            )}
             <Button className="w-full" onClick={handleContinue}>
               Continue as {lastAccount.displayName}
             </Button>
-            <Button variant="outline" className="w-full" onClick={() => setShowNewForm(true)}>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setShowNewForm(true)}
+            >
               Create New Account
             </Button>
             <Button
@@ -191,7 +242,10 @@ export function LoginPage() {
             <Button
               variant="ghost"
               className="w-full text-destructive hover:text-destructive"
-              onClick={() => { setForgetStep("warning"); setForgetError(null) }}
+              onClick={() => {
+                setForgetStep("warning");
+                setForgetError(null);
+              }}
             >
               Forget This Account
             </Button>
@@ -206,12 +260,13 @@ export function LoginPage() {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   // New account form (default, or when "Create New Account" is chosen)
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
+      <ThemeSetting />
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Welcome to SplitXL</CardTitle>
@@ -220,7 +275,11 @@ export function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleNewAccountSubmit} noValidate className="flex flex-col gap-4">
+          <form
+            onSubmit={handleNewAccountSubmit}
+            noValidate
+            className="flex flex-col gap-4"
+          >
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="displayName">Display name</Label>
               <Input
@@ -233,7 +292,9 @@ export function LoginPage() {
                 autoComplete="off"
                 autoFocus
               />
-              {nameError && <p className="text-xs text-destructive">{nameError}</p>}
+              {nameError && (
+                <p className="text-xs text-destructive">{nameError}</p>
+              )}
             </div>
             <Button type="submit" className="w-full">
               Continue
@@ -243,7 +304,10 @@ export function LoginPage() {
                 type="button"
                 variant="ghost"
                 className="w-full"
-                onClick={() => { setShowNewForm(false); setNameError(null) }}
+                onClick={() => {
+                  setShowNewForm(false);
+                  setNameError(null);
+                }}
               >
                 Back
               </Button>
@@ -252,5 +316,5 @@ export function LoginPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

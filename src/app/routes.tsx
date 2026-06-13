@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { AppLayout } from "@/app/AppLayout"
 import { LoginPage } from "@/features/auth/LoginPage"
 import { useAuthStore } from "@/stores/auth.store"
+import { HomePage } from "@/features/home/HomePage"
 
 const DashboardPage = lazy(() =>
   import("@/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage }))
@@ -48,14 +49,27 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to="/dashboard" replace />
   return <>{children}</>
+}
+
+function CatchAll() {
+  const user = useAuthStore((s) => s.user)
+  return <Navigate to={user ? "/dashboard" : "/"} replace />
 }
 
 export function AppRoutes() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Routes>
+        <Route
+          path="/"
+          element={
+            <PublicRoute>
+              <HomePage />
+            </PublicRoute>
+          }
+        />
         <Route
           path="/login"
           element={
@@ -71,7 +85,7 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/categories" element={<CategoriesPage />} />
           <Route path="/friends" element={<FriendsPage />} />
@@ -81,7 +95,7 @@ export function AppRoutes() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<CatchAll />} />
       </Routes>
     </Suspense>
   )
