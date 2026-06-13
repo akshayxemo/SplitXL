@@ -45,7 +45,25 @@ export async function updateFriend(
   const phone = changes.phone !== undefined ? changes.phone : existing.phone
   const error = validateContact(email, phone)
   if (error) throw new Error(error)
-  await db.friends.update(id, { ...changes, updatedAt: new Date().toISOString() })
+
+  const now = new Date().toISOString()
+  const friendUpdate = { ...changes, updatedAt: now }
+
+  // Propagate name/contact changes to all linked group members
+  const memberFields: Partial<Pick<Friend, "displayName" | "email" | "phone">> = {}
+  if (changes.displayName !== undefined) memberFields.displayName = changes.displayName
+  if (changes.email !== undefined) memberFields.email = changes.email
+  if (changes.phone !== undefined) memberFields.phone = changes.phone
+
+  await db.transaction("rw", db.friends, db.groupMembers, async () => {
+    await db.friends.update(id, friendUpdate)
+    if (Object.keys(memberFields).length > 0) {
+      const linkedMembers = await db.groupMembers.filter((m) => m.linkedFriendId === id).toArray()
+      for (const member of linkedMembers) {
+        await db.groupMembers.update(member.id, { ...memberFields, updatedAt: now })
+      }
+    }
+  })
 }
 
 export async function archiveFriend(id: string): Promise<void> {
@@ -60,6 +78,14 @@ export async function deleteFriend(id: string): Promise<void> {
     }
     await db.friends.delete(id)
   })
+
+  // Assert no group members still reference the deleted friend
+  const remaining = await db.groupMembers.filter((m) => m.linkedFriendId === id).count()
+  if (remaining > 0) {
+    throw new Error(
+      `Integrity check failed after deleteFriend: ${remaining} group member(s) still reference friend ${id}.`
+    )
+  }
 }
 
 export async function restoreFriend(id: string): Promise<void> {

@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
+import { ConfirmationModal } from "@/components/ConfirmationModal"
 import { DateTimePickerModal, formatDateTime } from "@/components/DateTimePickerModal"
 import { TransactionTimeline } from "@/components/TransactionTimeline"
 import { db, getAccountId, type SplitData } from "@/lib/db"
@@ -26,6 +27,7 @@ import {
   removeGroupMember,
   sumGroupExpenses,
   updateGroupExpense,
+  updateGroupMember,
 } from "@/features/groups/groups.db"
 import { getFriends } from "@/features/friends/friends.db"
 import { getGroupTransactions } from "@/features/transactions/transactions.db"
@@ -48,6 +50,15 @@ export function GroupDetailPage() {
   const [selectedFriendId, setSelectedFriendId] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [editingTxId, setEditingTxId] = useState<string | null>(null)
+
+  // Member view/edit/remove state
+  const [viewMemberId, setViewMemberId] = useState<string | null>(null)
+  const [editMemberId, setEditMemberId] = useState<string | null>(null)
+  const [editMemberName, setEditMemberName] = useState("")
+  const [editMemberEmail, setEditMemberEmail] = useState("")
+  const [editMemberPhone, setEditMemberPhone] = useState("")
+  const [editMemberError, setEditMemberError] = useState<string | null>(null)
+  const [removeMemberId, setRemoveMemberId] = useState<string | null>(null)
 
   const emptyExpenseForm = {
     title: "",
@@ -415,12 +426,32 @@ export function GroupDetailPage() {
                     ))}
                   </div>
                   {memberMode === "friend" ? (
-                    <Select value={selectedFriendId} onChange={(e) => setSelectedFriendId(e.target.value)}>
-                      <option value="">Select friend...</option>
-                      {(friends ?? []).map((f) => (
-                        <option key={f.id} value={f.id}>{f.displayName}</option>
-                      ))}
-                    </Select>
+                    <div className="space-y-2 max-h-64 overflow-y-auto rounded-md border border-border p-2">
+                      {(friends ?? []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground px-2 py-1">No friends found. Add friends first.</p>
+                      ) : (
+                        (friends ?? []).map((f) => {
+                          const contactLine = [f.email, f.phone].filter(Boolean).join(" · ")
+                          return (
+                            <button
+                              key={f.id}
+                              type="button"
+                              onClick={() => setSelectedFriendId(f.id)}
+                              className={`w-full text-left rounded-md px-3 py-2 text-sm transition-colors border ${
+                                selectedFriendId === f.id
+                                  ? "border-primary bg-primary/10"
+                                  : "border-transparent hover:bg-muted"
+                              }`}
+                            >
+                              <span className="font-medium">{f.displayName}</span>
+                              {contactLine && (
+                                <span className="block text-xs text-muted-foreground">{contactLine}</span>
+                              )}
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
                   ) : (
                     <>
                       <Input placeholder="Name" value={memberName} onChange={(e) => setMemberName(e.target.value)} />
@@ -435,21 +466,143 @@ export function GroupDetailPage() {
               </CardContent>
             </Card>
           )}
-          {activeMembers.map((m) => (
-            <Card key={m.id} size="sm">
-              <CardContent className="flex items-center justify-between py-4">
-                <div>
-                  <span>{m.displayName}</span>
-                  {(m.email || m.phone) && (
-                    <p className="text-xs text-muted-foreground">{m.email ?? m.phone}</p>
+          {activeMembers.map((m) => {
+            const linkedFriend = friends?.find((f) => f.id === m.linkedFriendId)
+            return (
+              <Card key={m.id} size="sm">
+                <CardContent className="py-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-medium">{m.displayName}</span>
+                      {(m.email || m.phone) && (
+                        <p className="text-xs text-muted-foreground">{[m.email, m.phone].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setViewMemberId(viewMemberId === m.id ? null : m.id)
+                          setEditMemberId(null)
+                        }}
+                      >
+                        {viewMemberId === m.id ? "Hide" : "View"}
+                      </Button>
+                      {!locked && group.status !== "archived" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setEditMemberId(m.id)
+                            setEditMemberName(m.displayName)
+                            setEditMemberEmail(m.email ?? "")
+                            setEditMemberPhone(m.phone ?? "")
+                            setEditMemberError(null)
+                            setViewMemberId(null)
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      {m.linkedAccountId !== accountId && !locked && group.status !== "archived" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRemoveMemberId(m.id)}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* View detail panel */}
+                  {viewMemberId === m.id && editMemberId !== m.id && (
+                    <div className="border-t border-border pt-3 grid gap-1 text-sm">
+                      <div className="grid grid-cols-[120px_1fr] gap-1">
+                        <span className="text-muted-foreground">Name</span>
+                        <span>{m.displayName}</span>
+                      </div>
+                      <div className="grid grid-cols-[120px_1fr] gap-1">
+                        <span className="text-muted-foreground">Email</span>
+                        <span>{m.email ?? <span className="italic text-muted-foreground">—</span>}</span>
+                      </div>
+                      <div className="grid grid-cols-[120px_1fr] gap-1">
+                        <span className="text-muted-foreground">Phone</span>
+                        <span>{m.phone ?? <span className="italic text-muted-foreground">—</span>}</span>
+                      </div>
+                      <div className="grid grid-cols-[120px_1fr] gap-1">
+                        <span className="text-muted-foreground">Linked Friend</span>
+                        <span>
+                          {linkedFriend
+                            ? linkedFriend.displayName
+                            : <span className="italic text-muted-foreground">Not linked</span>}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[120px_1fr] gap-1">
+                        <span className="text-muted-foreground">Added</span>
+                        <span>{new Date(m.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
                   )}
-                </div>
-                {m.linkedAccountId !== accountId && !locked && group.status !== "archived" && (
-                  <Button variant="ghost" size="sm" onClick={() => removeGroupMember(m.id)}>Remove</Button>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+
+                  {/* Inline edit form */}
+                  {editMemberId === m.id && (
+                    <form
+                      className="border-t border-border pt-3 space-y-2"
+                      onSubmit={async (e) => {
+                        e.preventDefault()
+                        setEditMemberError(null)
+                        try {
+                          await updateGroupMember(m.id, {
+                            displayName: editMemberName.trim(),
+                            email: editMemberEmail.trim() || undefined,
+                            phone: editMemberPhone.trim() || undefined,
+                          })
+                          setEditMemberId(null)
+                        } catch (err) {
+                          setEditMemberError(err instanceof Error ? err.message : "Failed to update member.")
+                        }
+                      }}
+                    >
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <div>
+                          <Label>Name</Label>
+                          <Input
+                            value={editMemberName}
+                            onChange={(e) => setEditMemberName(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <Label>Email</Label>
+                          <Input
+                            value={editMemberEmail}
+                            onChange={(e) => setEditMemberEmail(e.target.value)}
+                            placeholder="optional"
+                          />
+                        </div>
+                        <div>
+                          <Label>Phone</Label>
+                          <Input
+                            value={editMemberPhone}
+                            onChange={(e) => setEditMemberPhone(e.target.value)}
+                            placeholder="optional"
+                          />
+                        </div>
+                      </div>
+                      {editMemberError && <p className="text-sm text-destructive">{editMemberError}</p>}
+                      <div className="flex gap-2">
+                        <Button type="submit" size="sm">Save</Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => setEditMemberId(null)}>Cancel</Button>
+                      </div>
+                    </form>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
 
@@ -464,6 +617,20 @@ export function GroupDetailPage() {
         onChange={(iso) =>
           setExpenseForm({ ...expenseForm, transactionDateTime: iso })
         }
+      />
+
+      {/* Remove member confirmation modal */}
+      <ConfirmationModal
+        open={!!removeMemberId}
+        onOpenChange={(open) => !open && setRemoveMemberId(null)}
+        title="Remove member?"
+        description="This will remove the member from the group. Their expenses will remain."
+        confirmLabel="Remove"
+        variant="destructive"
+        onConfirm={async () => {
+          if (removeMemberId) await removeGroupMember(removeMemberId)
+          setRemoveMemberId(null)
+        }}
       />
     </div>
   )

@@ -19,7 +19,7 @@ import { Select } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { db, getAccountId } from "@/lib/db"
 import { formatINR } from "@/lib/money"
-import { computeNetBalances, simplifyDebts, sumExpenseTransactions } from "@/lib/settlement"
+import { computeNetBalances, computeSettlementProgress, computeShares, sumExpenseTransactions } from "@/lib/settlement"
 import { useAuthStore } from "@/stores/auth.store"
 import { groupByCategory, groupByMonth, sumExpenses } from "@/features/expenses/expenses.db"
 import { getGroupsForAccount } from "@/features/groups/groups.db"
@@ -66,7 +66,6 @@ export function InsightsPage() {
       const expenseTx = transactions.filter((t) => t.type === "expense")
 
       const categorySpend: Record<string, number> = {}
-      const memberSpend: Record<string, number> = {}
       const memberPaid: Record<string, number> = {}
       const monthlySpend: Record<string, number> = {}
 
@@ -78,30 +77,40 @@ export function InsightsPage() {
       }
 
       const balances = computeNetBalances(transactions, groupMembers)
-      for (const [memberId, balance] of Object.entries(balances)) {
-        if (balance < 0) memberSpend[memberId] = -balance
+
+      // Per-member: amount consumed (sum of shares across expense transactions)
+      const memberConsumed: Record<string, number> = {}
+      const memberExpenseCount: Record<string, number> = {}
+      for (const tx of expenseTx) {
+        const shares = computeShares(tx, groupMembers)
+        for (const [memberId, share] of Object.entries(shares)) {
+          if (share > 0) {
+            memberConsumed[memberId] = (memberConsumed[memberId] ?? 0) + share
+            memberExpenseCount[memberId] = (memberExpenseCount[memberId] ?? 0) + 1
+          }
+        }
       }
 
       const group = groups.find((g) => g.id === groupId)
       const spent = sumExpenseTransactions(transactions)
-      const debts = simplifyDebts(balances)
-      const settlementTotal = debts.reduce((s, d) => s + d.amountPaise, 0)
-      const settlementProgress =
-        settlementTotal === 0 ? 100 : Math.max(0, 100 - (settlementTotal / Math.max(spent, 1)) * 100)
+      const settlementProgress = computeSettlementProgress(transactions, groupMembers)
+
+      // Build per-member stats
+      const memberStats = groupMembers.map((m) => ({
+        id: m.id,
+        name: m.displayName,
+        amountPaid: (memberPaid[m.id] ?? 0) / 100,
+        amountConsumed: (memberConsumed[m.id] ?? 0) / 100,
+        netPosition: (balances[m.id] ?? 0) / 100,
+        expenseCount: memberExpenseCount[m.id] ?? 0,
+      }))
 
       groupInsights = {
         categoryPie: Object.entries(categorySpend).map(([id, val]) => ({
           name: categoryMap[id] ?? "Unknown",
           value: val / 100,
         })),
-        memberContribution: Object.entries(memberPaid).map(([id, val]) => ({
-          name: groupMembers.find((m) => m.id === id)?.displayName ?? id,
-          value: val / 100,
-        })),
-        memberSpending: Object.entries(memberSpend).map(([id, val]) => ({
-          name: groupMembers.find((m) => m.id === id)?.displayName ?? id,
-          amount: val / 100,
-        })),
+        memberStats,
         monthlyBar: Object.entries(monthlySpend)
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([month, val]) => ({ month, amount: val / 100 })),
@@ -153,8 +162,19 @@ export function InsightsPage() {
           <p className="text-sm text-muted-foreground">Refunds recorded: {insights.refundCount}</p>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <InsightChart title="Category Breakdown" data={insights.personalByCategory} type="pie" />
-            <InsightChart title="Monthly Spending" data={insights.personalByMonth.map((d) => ({ name: d.month, amount: d.amount }))} type="bar" dataKey="amount" />
+            <InsightChart
+              title="Category Breakdown"
+              description={`Last ${dateRangeMonths} months · Total spend per category`}
+              data={insights.personalByCategory}
+              type="pie"
+            />
+            <InsightChart
+              title="Monthly Spending"
+              description={`Last ${dateRangeMonths} months · Total personal expenses per month`}
+              data={insights.personalByMonth.map((d) => ({ name: d.month, amount: d.amount }))}
+              type="bar"
+              dataKey="amount"
+            />
           </div>
         </CardContent>
       </Card>
@@ -189,16 +209,77 @@ export function InsightsPage() {
                       : `₹${insights.groupInsights.budgetVsActual.actual.toFixed(2)} (no budget)`
                   }
                 />
-                <StatBox
-                  label="Settlement Progress"
-                  value={`${insights.groupInsights.settlementProgress.toFixed(0)}%`}
-                />
               </div>
+
+              {/* Settlement Progress Breakdown */}
+              <Card className="border-border">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Settlement Progress</CardTitle>
+                  <CardDescription>
+                    Settled Amount ÷ Total Debt · All time
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatBox
+                    label="Total Debt"
+                    value={`₹${(insights.groupInsights.settlementProgress.totalDebt / 100).toFixed(2)}`}
+                  />
+                  <StatBox
+                    label="Settled Amount"
+                    value={`₹${(insights.groupInsights.settlementProgress.settledAmount / 100).toFixed(2)}`}
+                  />
+                  <StatBox
+                    label="Remaining Amount"
+                    value={`₹${(insights.groupInsights.settlementProgress.remainingAmount / 100).toFixed(2)}`}
+                  />
+                  <StatBox
+                    label="Completion"
+                    value={`${insights.groupInsights.settlementProgress.completionPct.toFixed(0)}%`}
+                  />
+                </CardContent>
+              </Card>
+
+              {/* Per-Member Metrics */}
+              <div>
+                <p className="text-sm font-medium mb-1">Member Contributions · All time</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Amount Paid = money paid for expenses · Amount Consumed = member's share of expenses ·
+                  Net Position = positive means owed money, negative means owes money
+                </p>
+                <div className="space-y-3">
+                  {insights.groupInsights.memberStats.map((m) => (
+                    <Card key={m.id} className="border-border">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">{m.name}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <StatBox label="Amount Paid" value={`₹${m.amountPaid.toFixed(2)}`} />
+                        <StatBox label="Amount Consumed" value={`₹${m.amountConsumed.toFixed(2)}`} />
+                        <StatBox
+                          label="Net Position"
+                          value={`${m.netPosition >= 0 ? "+" : ""}₹${m.netPosition.toFixed(2)}`}
+                        />
+                        <StatBox label="Expense Count" value={String(m.expenseCount)} />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid gap-4 lg:grid-cols-2">
-                <InsightChart title="Category Spending" data={insights.groupInsights.categoryPie} type="pie" />
-                <InsightChart title="Member Contributions" data={insights.groupInsights.memberContribution} type="pie" />
-                <InsightChart title="Member Spending" data={insights.groupInsights.memberSpending} type="bar" dataKey="amount" />
-                <InsightChart title="Monthly Spending" data={insights.groupInsights.monthlyBar.map((d) => ({ name: d.month, amount: d.amount }))} type="bar" dataKey="amount" />
+                <InsightChart
+                  title="Category Spending"
+                  description={`Last ${dateRangeMonths} months · Total amount per category`}
+                  data={insights.groupInsights.categoryPie}
+                  type="pie"
+                />
+                <InsightChart
+                  title="Monthly Spending"
+                  description="All time · Total group expenses per month"
+                  data={insights.groupInsights.monthlyBar.map((d) => ({ name: d.month, amount: d.amount }))}
+                  type="bar"
+                  dataKey="amount"
+                />
               </div>
             </>
           )}
@@ -219,11 +300,13 @@ function StatBox({ label, value }: { label: string; value: string }) {
 
 function InsightChart({
   title,
+  description,
   data,
   type,
   dataKey = "value",
 }: {
   title: string
+  description?: string
   data: { name: string; value?: number; amount?: number }[]
   type: "pie" | "bar"
   dataKey?: string
@@ -231,7 +314,8 @@ function InsightChart({
   if (data.length === 0) {
     return (
       <div>
-        <p className="text-sm font-medium mb-2">{title}</p>
+        <p className="text-sm font-medium mb-1">{title}</p>
+        {description && <p className="text-xs text-muted-foreground mb-2">{description}</p>}
         <p className="text-sm text-muted-foreground h-[200px] flex items-center justify-center">No data</p>
       </div>
     )
@@ -239,7 +323,8 @@ function InsightChart({
 
   return (
     <div>
-      <p className="text-sm font-medium mb-2">{title}</p>
+      <p className="text-sm font-medium mb-1">{title}</p>
+      {description && <p className="text-xs text-muted-foreground mb-2">{description}</p>}
       <ResponsiveContainer width="100%" height={200}>
         {type === "pie" ? (
           <PieChart>

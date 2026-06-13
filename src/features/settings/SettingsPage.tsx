@@ -102,7 +102,10 @@ export function SettingsPage() {
     }
   }
 
-  async function handleSaveProfile() {
+  async function handleSaveProfile(e?: React.FormEvent) {
+    e?.preventDefault()
+    setMessage(null)
+    setError(null)
     try {
       const updated = await updateDisplayName(displayName)
       if (updated) {
@@ -143,23 +146,25 @@ export function SettingsPage() {
           <CardTitle>Account</CardTitle>
           <CardDescription>Local account profile</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label>Display Name</Label>
-            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+        <CardContent>
+          <form onSubmit={handleSaveProfile} className="space-y-3">
             <div>
-              <Label>Email (optional)</Label>
-              <Input value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Label>Display Name</Label>
+              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </div>
-            <div>
-              <Label>Phone (optional)</Label>
-              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Email (optional)</Label>
+                <Input value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+              <div>
+                <Label>Phone (optional)</Label>
+                <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+              </div>
             </div>
-          </div>
-          <p className="text-xs text-muted-foreground">Account ID: {accountId}</p>
-          <Button onClick={handleSaveProfile}>Save Profile</Button>
+            <p className="text-xs text-muted-foreground">Account ID: {accountId}</p>
+            <Button type="submit">Update Profile</Button>
+          </form>
         </CardContent>
       </Card>
 
