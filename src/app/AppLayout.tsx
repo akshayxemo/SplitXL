@@ -49,12 +49,12 @@ export function AppLayout() {
         className={cn(
           "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-border bg-card transition-transform duration-300",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
-          "md:translate-x-0"
+          "md:translate-x-0",
         )}
       >
-        <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-          <LogoPlaceholder />
-          <span className="text-lg font-semibold text-primary">SplitXL</span>
+        <div className="flex h-18 items-center gap-2 border-b border-border px-4 justify-center">
+          <LogoPlaceholder src="/logo-horizontal.png" />
+          {/* <span className="text-lg font-semibold text-primary">SplitXL</span> */}
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
@@ -63,12 +63,15 @@ export function AppLayout() {
               key={to}
               to={to}
               end={to === "/"}
+              onClick={() => {
+                if (sidebarOpen) toggleSidebar();
+              }}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                   isActive
-                    ? "bg-primary/10 font-medium text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? "bg-primary/15 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )
               }
             >
@@ -79,8 +82,15 @@ export function AppLayout() {
         </nav>
 
         <div className="border-t border-border p-3">
-          <p className="mb-2 truncate px-3 text-xs text-muted-foreground">{user?.displayName}</p>
-          <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => setConfirmLogout(true)}>
+          <p className="mb-2 truncate px-3 text-xs text-muted-foreground">
+            {user?.displayName}
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => setConfirmLogout(true)}
+          >
             <LogOut className="size-4" />
             Log out
           </Button>
@@ -97,12 +107,11 @@ export function AppLayout() {
       )}
 
       <div className="flex min-h-screen flex-col md:ml-64">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background px-4 md:hidden">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background px-4 md:hidden justify-between flex-row-reverse">
           <Button variant="ghost" size="icon-sm" onClick={toggleSidebar}>
             <Menu className="size-5" />
           </Button>
-          <LogoPlaceholder className="size-6" />
-          <span className="font-semibold">SplitXL</span>
+          <LogoPlaceholder className="size-32" src="/logo-horizontal.png" />
         </header>
 
         <main className="flex-1 p-4 pb-20 md:p-6">
@@ -118,7 +127,7 @@ export function AppLayout() {
               className={({ isActive }) =>
                 cn(
                   "flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px]",
-                  isActive ? "text-primary" : "text-muted-foreground"
+                  isActive ? "text-primary" : "text-muted-foreground",
                 )
               }
             >
@@ -138,5 +147,5 @@ export function AppLayout() {
         onConfirm={handleLogout}
       />
     </div>
-  )
+  );
 }
