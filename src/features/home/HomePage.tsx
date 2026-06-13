@@ -80,6 +80,16 @@ export const HomePage = () => {
         <p className="mt-12 text-center text-sm text-muted-foreground">
           No signup required • Works offline • Install as a PWA
         </p>
+        <p className="mt-4 text-center text-sm text-muted-foreground  pt-4 border-t border-gray-500/50 w-full">
+          Built by Akshay | Open Source on{" "}
+          <a
+            href="https://github.com/akshayxemo/SplitXL"
+            target="_blank"
+            className="text-gray-200 hover:text-white"
+          >
+            Github
+          </a>
+        </p>
       </main>
     </div>
   );
