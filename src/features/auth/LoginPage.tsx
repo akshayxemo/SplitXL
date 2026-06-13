@@ -19,7 +19,7 @@ export function LoginPage() {
   const [displayName, setDisplayName] = useState("")
   const [error, setError] = useState<string | null>(null)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const validationError = validateDisplayName(displayName)
     if (validationError) {
@@ -27,7 +27,8 @@ export function LoginPage() {
       return
     }
     setError(null)
-    setUser(createGuestUser(displayName))
+    const user = await createGuestUser(displayName)
+    setUser(user)
     navigate("/", { replace: true })
   }
 

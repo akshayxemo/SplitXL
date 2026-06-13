@@ -1,77 +1,93 @@
 import { useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { useLiveQuery } from "dexie-react-hooks"
-import { format } from "date-fns"
-import { ArrowLeft, Trash2 } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { db, type SplitData } from "@/lib/db"
+import { Badge } from "@/components/ui/badge"
+import { DateTimePickerModal, formatDateTime } from "@/components/DateTimePickerModal"
+import { TransactionTimeline } from "@/components/TransactionTimeline"
+import { db, getAccountId, type SplitData } from "@/lib/db"
+import { isGroupLocked, statusLabel } from "@/lib/group-guards"
 import { budgetUtilization, formatINR, parseINR } from "@/lib/money"
 import { useAuthStore } from "@/stores/auth.store"
-import { getCategoriesForUser } from "@/features/categories/categories.db"
+import { formatCategoryLabel, getCategoriesForUser } from "@/features/categories/categories.db"
 import {
   addGroupExpense,
   addGroupMember,
+  addGroupMemberFromFriend,
   deleteGroupExpense,
-  getGroupExpenses,
   getGroupMembers,
   removeGroupMember,
   sumGroupExpenses,
+  updateGroupExpense,
 } from "@/features/groups/groups.db"
+import { getFriends } from "@/features/friends/friends.db"
+import { getGroupTransactions } from "@/features/transactions/transactions.db"
 import { SettlementsPanel } from "@/features/settlements/SettlementsPanel"
 
 type SplitMode = SplitData["method"]
+type MemberAddMode = "friend" | "new" | "save_friend"
 
 export function GroupDetailPage() {
   const { id: groupId } = useParams<{ id: string }>()
   const user = useAuthStore((s) => s.user)!
+  const accountId = getAccountId(user)
   const [tab, setTab] = useState<"expenses" | "members" | "settlements">("expenses")
   const [showExpenseForm, setShowExpenseForm] = useState(false)
+  const [showDateTimePicker, setShowDateTimePicker] = useState(false)
+  const [memberMode, setMemberMode] = useState<MemberAddMode>("new")
   const [memberName, setMemberName] = useState("")
+  const [memberEmail, setMemberEmail] = useState("")
+  const [memberPhone, setMemberPhone] = useState("")
+  const [selectedFriendId, setSelectedFriendId] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [editingTxId, setEditingTxId] = useState<string | null>(null)
+
   const emptyExpenseForm = {
     title: "",
     amount: "",
     categoryId: "",
-    date: format(new Date(), "yyyy-MM-dd"),
+    transactionDateTime: new Date().toISOString(),
     notes: "",
-    paidByUserId: user.userId,
+    paidByMemberId: "",
     splitMode: "equal_all" as SplitMode,
     selectedMembers: [] as string[],
     manualShares: {} as Record<string, string>,
     percentageShares: {} as Record<string, string>,
-  };
+  }
 
-  const [expenseForm, setExpenseForm] = useState(emptyExpenseForm);
+  const [expenseForm, setExpenseForm] = useState(emptyExpenseForm)
 
   const data = useLiveQuery(async () => {
     if (!groupId) return null
-    const [group, members, expenses] = await Promise.all([
+    const [group, members, transactions] = await Promise.all([
       db.groups.get(groupId),
       getGroupMembers(groupId),
-      getGroupExpenses(groupId),
+      getGroupTransactions(groupId),
     ])
-    return { group, members, expenses, spent: sumGroupExpenses(expenses) }
+    return { group, members, transactions, spent: sumGroupExpenses(transactions) }
   }, [groupId])
 
   const categories = useLiveQuery(
-    () => (groupId ? getCategoriesForUser(user.userId, groupId) : []),
-    [user.userId, groupId]
+    () => (groupId ? getCategoriesForUser(accountId, groupId) : []),
+    [accountId, groupId]
   )
+
+  const friends = useLiveQuery(() => getFriends(accountId), [accountId])
 
   if (!groupId || !data) return <p className="text-muted-foreground">Loading...</p>
   if (!data.group) return <p className="text-destructive">Group not found.</p>
 
-  const currentGroupId = groupId
-
+  const { group } = data
   const activeMembers = data.members.filter((m) => m.isActive)
-  const categoryMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c.name]))
+  const locked = isGroupLocked(group)
+  const creatorMember = activeMembers.find((m) => m.linkedAccountId === accountId)
 
   function buildSplitData(): SplitData {
     switch (expenseForm.splitMode) {
@@ -81,15 +97,15 @@ export function GroupDetailPage() {
         return { method: "equal_selected", memberIds: expenseForm.selectedMembers }
       case "manual": {
         const shares: Record<string, number> = {}
-        for (const [uid, val] of Object.entries(expenseForm.manualShares)) {
-          shares[uid] = parseINR(val)
+        for (const [mid, val] of Object.entries(expenseForm.manualShares)) {
+          shares[mid] = parseINR(val)
         }
         return { method: "manual", shares }
       }
       case "percentage": {
         const shares: Record<string, number> = {}
-        for (const [uid, val] of Object.entries(expenseForm.percentageShares)) {
-          shares[uid] = Number.parseFloat(val) || 0
+        for (const [mid, val] of Object.entries(expenseForm.percentageShares)) {
+          shares[mid] = Number.parseFloat(val) || 0
         }
         return { method: "percentage", shares }
       }
@@ -100,48 +116,73 @@ export function GroupDetailPage() {
     e.preventDefault()
     setError(null)
     const amountPaise = parseINR(expenseForm.amount)
-    if (!expenseForm.title.trim() || amountPaise <= 0 || !expenseForm.categoryId) {
-      setError("Fill in title, amount, and category.")
+    const paidByMemberId = expenseForm.paidByMemberId || creatorMember?.id || activeMembers[0]?.id
+    if (!expenseForm.title.trim() || amountPaise <= 0 || !expenseForm.categoryId || !paidByMemberId) {
+      setError("Fill in title, amount, category, and payer.")
       return
     }
     try {
-      await addGroupExpense({
-        groupId: currentGroupId,
+      const payload = {
+        groupId: groupId!,
         title: expenseForm.title,
         amountPaise,
         categoryId: expenseForm.categoryId,
-        date: expenseForm.date,
+        transactionDateTime: expenseForm.transactionDateTime,
         notes: expenseForm.notes,
-        paidByUserId: expenseForm.paidByUserId,
+        paidByMemberId,
         splitData: buildSplitData(),
-      })
+      }
+      if (editingTxId) {
+        await updateGroupExpense(editingTxId, payload)
+        setEditingTxId(null)
+      } else {
+        await addGroupExpense(payload)
+      }
       setShowExpenseForm(false)
+      setExpenseForm(emptyExpenseForm)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add expense.")
+      setError(err instanceof Error ? err.message : "Failed to save expense.")
     }
   }
 
   async function handleAddMember(e: React.FormEvent) {
     e.preventDefault()
-    if (!memberName.trim()) return
-    await addGroupMember({ groupId: currentGroupId, displayName: memberName })
-    setMemberName("")
+    setError(null)
+    try {
+      if (memberMode === "friend") {
+        if (!selectedFriendId) throw new Error("Select a friend.")
+        await addGroupMemberFromFriend({ groupId: groupId!, friendId: selectedFriendId })
+      } else {
+        await addGroupMember({
+          groupId: groupId!,
+          displayName: memberName,
+          email: memberEmail || undefined,
+          phone: memberPhone || undefined,
+          saveAsFriend: memberMode === "save_friend",
+          ownerAccountId: accountId,
+        })
+      }
+      setMemberName("")
+      setMemberEmail("")
+      setMemberPhone("")
+      setSelectedFriendId("")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add member.")
+    }
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Link
-          to="/groups"
-          className="inline-flex size-8 items-center justify-center rounded-md hover:bg-muted"
-        >
+        <Link to="/groups" className="inline-flex size-8 items-center justify-center rounded-md hover:bg-muted">
           <ArrowLeft className="size-4" />
         </Link>
         <div>
-          <h1 className="text-2xl font-semibold">{data.group.name}</h1>
-          {data.group.description && (
-            <p className="text-muted-foreground">{data.group.description}</p>
-          )}
+          <h1 className="text-2xl font-semibold">{group.name}</h1>
+          <div className="flex items-center gap-2">
+            {group.description && <p className="text-muted-foreground">{group.description}</p>}
+            <Badge variant="outline">{statusLabel(group.status)}</Badge>
+          </div>
         </div>
       </div>
 
@@ -152,18 +193,13 @@ export function GroupDetailPage() {
               <p className="text-xs text-muted-foreground">Total Spent</p>
               <p className="text-lg font-semibold">{formatINR(data.spent)}</p>
             </div>
-            {data.group.budgetPaise != null && (
+            {group.budgetPaise != null && (
               <div className="flex-1 min-w-[200px]">
                 <div className="flex justify-between text-xs text-muted-foreground mb-1">
                   <span>Budget</span>
-                  <span>{formatINR(data.group.budgetPaise)}</span>
+                  <span>{formatINR(group.budgetPaise)}</span>
                 </div>
-                <Progress value={budgetUtilization(data.spent, data.group.budgetPaise)} />
-                {data.spent > data.group.budgetPaise && (
-                  <p className="text-xs text-destructive mt-1">
-                    Over budget by {formatINR(data.spent - data.group.budgetPaise)}
-                  </p>
-                )}
+                <Progress value={budgetUtilization(data.spent, group.budgetPaise)} />
               </div>
             )}
           </div>
@@ -183,16 +219,30 @@ export function GroupDetailPage() {
         ))}
       </div>
 
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
       {tab === "expenses" && (
         <div className="space-y-4">
-          <Button onClick={() => {
-            setShowExpenseForm(true);
-            setExpenseForm(emptyExpenseForm);
-          }}>Add Group Expense</Button>
+          {!locked && group.status !== "archived" && (
+            <Button
+              onClick={() => {
+                setShowExpenseForm(true)
+                setEditingTxId(null)
+                setExpenseForm({
+                  ...emptyExpenseForm,
+                  paidByMemberId: creatorMember?.id ?? "",
+                })
+              }}
+            >
+              Add Group Expense
+            </Button>
+          )}
 
           {showExpenseForm && (
             <Card>
-              <CardHeader><CardTitle>New Expense</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle>{editingTxId ? "Edit Expense" : "New Expense"}</CardTitle>
+              </CardHeader>
               <CardContent>
                 <form onSubmit={handleAddExpense} className="grid gap-3 sm:grid-cols-2">
                   <div>
@@ -208,19 +258,24 @@ export function GroupDetailPage() {
                     <Select value={expenseForm.categoryId} onChange={(e) => setExpenseForm({ ...expenseForm, categoryId: e.target.value })}>
                       <option value="">Select...</option>
                       {(categories ?? []).map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>{formatCategoryLabel(c)}</option>
                       ))}
                     </Select>
                   </div>
                   <div>
-                    <Label>Date</Label>
-                    <Input type="date" value={expenseForm.date} onChange={(e) => setExpenseForm({ ...expenseForm, date: e.target.value })} />
+                    <Label>Date & Time</Label>
+                    <Button type="button" variant="outline" className="w-full justify-start" onClick={() => setShowDateTimePicker(true)}>
+                      {formatDateTime(expenseForm.transactionDateTime)}
+                    </Button>
                   </div>
                   <div>
                     <Label>Paid By</Label>
-                    <Select value={expenseForm.paidByUserId} onChange={(e) => setExpenseForm({ ...expenseForm, paidByUserId: e.target.value })}>
+                    <Select
+                      value={expenseForm.paidByMemberId}
+                      onChange={(e) => setExpenseForm({ ...expenseForm, paidByMemberId: e.target.value })}
+                    >
                       {activeMembers.map((m) => (
-                        <option key={m.userId} value={m.userId}>{m.displayName}</option>
+                        <option key={m.id} value={m.id}>{m.displayName}</option>
                       ))}
                     </Select>
                   </div>
@@ -236,19 +291,18 @@ export function GroupDetailPage() {
                       <option value="percentage">Percentage</option>
                     </Select>
                   </div>
-
                   {expenseForm.splitMode === "equal_selected" && (
                     <div className="sm:col-span-2 space-y-2">
                       <Label>Select Members</Label>
                       {activeMembers.map((m) => (
-                        <label key={m.userId} className="flex items-center gap-2 text-sm">
+                        <label key={m.id} className="flex items-center gap-2 text-sm">
                           <input
                             type="checkbox"
-                            checked={expenseForm.selectedMembers.includes(m.userId)}
+                            checked={expenseForm.selectedMembers.includes(m.id)}
                             onChange={(e) => {
                               const ids = e.target.checked
-                                ? [...expenseForm.selectedMembers, m.userId]
-                                : expenseForm.selectedMembers.filter((id) => id !== m.userId)
+                                ? [...expenseForm.selectedMembers, m.id]
+                                : expenseForm.selectedMembers.filter((id) => id !== m.id)
                               setExpenseForm({ ...expenseForm, selectedMembers: ids })
                             }}
                           />
@@ -257,18 +311,17 @@ export function GroupDetailPage() {
                       ))}
                     </div>
                   )}
-
                   {expenseForm.splitMode === "manual" && (
                     <div className="sm:col-span-2 grid gap-2 sm:grid-cols-2">
                       {activeMembers.map((m) => (
-                        <div key={m.userId}>
+                        <div key={m.id}>
                           <Label>{m.displayName} (₹)</Label>
                           <Input
-                            value={expenseForm.manualShares[m.userId] ?? ""}
+                            value={expenseForm.manualShares[m.id] ?? ""}
                             onChange={(e) =>
                               setExpenseForm({
                                 ...expenseForm,
-                                manualShares: { ...expenseForm.manualShares, [m.userId]: e.target.value },
+                                manualShares: { ...expenseForm.manualShares, [m.id]: e.target.value },
                               })
                             }
                           />
@@ -276,21 +329,20 @@ export function GroupDetailPage() {
                       ))}
                     </div>
                   )}
-
                   {expenseForm.splitMode === "percentage" && (
                     <div className="sm:col-span-2 grid gap-2 sm:grid-cols-2">
                       {activeMembers.map((m) => (
-                        <div key={m.userId}>
+                        <div key={m.id}>
                           <Label>{m.displayName} (%)</Label>
                           <Input
                             type="number"
                             min="0"
                             max="100"
-                            value={expenseForm.percentageShares[m.userId] ?? ""}
+                            value={expenseForm.percentageShares[m.id] ?? ""}
                             onChange={(e) =>
                               setExpenseForm({
                                 ...expenseForm,
-                                percentageShares: { ...expenseForm.percentageShares, [m.userId]: e.target.value },
+                                percentageShares: { ...expenseForm.percentageShares, [m.id]: e.target.value },
                               })
                             }
                           />
@@ -298,13 +350,10 @@ export function GroupDetailPage() {
                       ))}
                     </div>
                   )}
-
                   <div className="sm:col-span-2">
                     <Label>Notes</Label>
                     <Textarea value={expenseForm.notes} onChange={(e) => setExpenseForm({ ...expenseForm, notes: e.target.value })} />
                   </div>
-
-                  {error && <p className="text-sm text-destructive sm:col-span-2">{error}</p>}
                   <div className="flex gap-2 sm:col-span-2">
                     <Button type="submit">Save</Button>
                     <Button type="button" variant="outline" onClick={() => setShowExpenseForm(false)}>Cancel</Button>
@@ -314,38 +363,88 @@ export function GroupDetailPage() {
             </Card>
           )}
 
-          {data.expenses.map((expense) => (
-            <Card key={expense.id} size="sm">
-              <CardContent className="flex items-center justify-between py-4">
-                <div>
-                  <p className="font-medium">{expense.title}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {expense.date} · {categoryMap[expense.categoryId]} · {expense.splitMethod.replace(/_/g, " ")}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge>{formatINR(expense.amountPaise)}</Badge>
-                  <Button variant="ghost" size="icon-sm" onClick={() => deleteGroupExpense(expense.id)}>
-                    <Trash2 className="size-4 text-destructive" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          <TransactionTimeline
+            transactions={data.transactions}
+            members={activeMembers}
+            categories={categories ?? []}
+            groupReadOnly={locked || group.status === "archived" || group.status === "settled"}
+            onEdit={(tx) => {
+              setEditingTxId(tx.id)
+              setShowExpenseForm(true)
+              setExpenseForm({
+                title: tx.title,
+                amount: String(tx.amountPaise / 100),
+                categoryId: tx.categoryId ?? "",
+                transactionDateTime: tx.transactionDateTime,
+                notes: tx.notes ?? "",
+                paidByMemberId: tx.paidByMemberId,
+                splitMode: tx.splitMethod ?? "equal_all",
+                selectedMembers: tx.splitData?.method === "equal_selected" ? tx.splitData.memberIds : [],
+                manualShares:
+                  tx.splitData?.method === "manual"
+                    ? Object.fromEntries(Object.entries(tx.splitData.shares).map(([k, v]) => [k, String(v / 100)]))
+                    : {},
+                percentageShares:
+                  tx.splitData?.method === "percentage"
+                    ? Object.fromEntries(Object.entries(tx.splitData.shares).map(([k, v]) => [k, String(v)]))
+                    : {},
+              })
+            }}
+            onDelete={(tx) => deleteGroupExpense(tx.id)}
+          />
         </div>
       )}
 
       {tab === "members" && (
         <div className="space-y-4">
-          <form onSubmit={handleAddMember} className="flex gap-2">
-            <Input placeholder="Member name" value={memberName} onChange={(e) => setMemberName(e.target.value)} />
-            <Button type="submit">Add</Button>
-          </form>
+          {!locked && group.status !== "archived" && (
+            <Card>
+              <CardContent className="pt-6">
+                <form onSubmit={handleAddMember} className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {(["friend", "new", "save_friend"] as const).map((mode) => (
+                      <Button
+                        key={mode}
+                        type="button"
+                        size="sm"
+                        variant={memberMode === mode ? "default" : "outline"}
+                        onClick={() => setMemberMode(mode)}
+                      >
+                        {mode === "friend" ? "Select Friend" : mode === "new" ? "New Member" : "New + Save as Friend"}
+                      </Button>
+                    ))}
+                  </div>
+                  {memberMode === "friend" ? (
+                    <Select value={selectedFriendId} onChange={(e) => setSelectedFriendId(e.target.value)}>
+                      <option value="">Select friend...</option>
+                      {(friends ?? []).map((f) => (
+                        <option key={f.id} value={f.id}>{f.displayName}</option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <>
+                      <Input placeholder="Name" value={memberName} onChange={(e) => setMemberName(e.target.value)} />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Input placeholder="Email (optional)" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
+                        <Input placeholder="Phone (optional)" value={memberPhone} onChange={(e) => setMemberPhone(e.target.value)} />
+                      </div>
+                    </>
+                  )}
+                  <Button type="submit">Add Member</Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
           {activeMembers.map((m) => (
             <Card key={m.id} size="sm">
               <CardContent className="flex items-center justify-between py-4">
-                <span>{m.displayName}</span>
-                {m.userId !== user.userId && (
+                <div>
+                  <span>{m.displayName}</span>
+                  {(m.email || m.phone) && (
+                    <p className="text-xs text-muted-foreground">{m.email ?? m.phone}</p>
+                  )}
+                </div>
+                {m.linkedAccountId !== accountId && !locked && group.status !== "archived" && (
                   <Button variant="ghost" size="sm" onClick={() => removeGroupMember(m.id)}>Remove</Button>
                 )}
               </CardContent>
@@ -355,12 +454,17 @@ export function GroupDetailPage() {
       )}
 
       {tab === "settlements" && (
-        <SettlementsPanel
-          groupId={currentGroupId}
-          members={activeMembers}
-          expenses={data.expenses}
-        />
+        <SettlementsPanel groupId={groupId} members={activeMembers} transactions={data.transactions} />
       )}
+
+      <DateTimePickerModal
+        open={showDateTimePicker}
+        onOpenChange={setShowDateTimePicker}
+        value={expenseForm.transactionDateTime}
+        onChange={(iso) =>
+          setExpenseForm({ ...expenseForm, transactionDateTime: iso })
+        }
+      />
     </div>
   )
 }

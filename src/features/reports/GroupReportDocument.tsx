@@ -13,9 +13,13 @@ interface GroupReportData {
   groupName: string
   total: string
   expenseCount: number
+  refundCount?: number
   budget: string
+  categoryBreakdown?: { name: string; amount: string }[]
   settlements: { from: string; to: string; amount: string }[]
-  expenses: { title: string; date: string; amount: string; paidBy: string }[]
+  settlementHistory?: { from: string; to: string; amount: string; date: string }[]
+  expenses: { title: string; date: string; amount: string; paidBy: string; category?: string }[]
+  refunds?: { title: string; date: string; amount: string }[]
 }
 
 export function GroupReportDocument({ data }: { data: GroupReportData }) {
@@ -24,7 +28,21 @@ export function GroupReportDocument({ data }: { data: GroupReportData }) {
       <Page size="A4" style={styles.page}>
         <Text style={styles.title}>{data.title}</Text>
         <Text style={styles.row}>Group: {data.groupName}</Text>
-        <Text style={styles.row}>Total: {data.total} · Budget: {data.budget}</Text>
+        <Text style={styles.row}>
+          Total: {data.total} · Budget: {data.budget}
+          {data.refundCount != null ? ` · ${data.refundCount} refunds` : ""}
+        </Text>
+
+        {data.categoryBreakdown && data.categoryBreakdown.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.heading}>Category Analysis</Text>
+            {data.categoryBreakdown.map((c, i) => (
+              <Text key={i} style={styles.row}>
+                {c.name}: {c.amount}
+              </Text>
+            ))}
+          </View>
+        )}
 
         <View style={styles.section}>
           <Text style={styles.heading}>Outstanding Settlements</Text>
@@ -39,14 +57,36 @@ export function GroupReportDocument({ data }: { data: GroupReportData }) {
           )}
         </View>
 
+        {data.settlementHistory && data.settlementHistory.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.heading}>Settlement History</Text>
+            {data.settlementHistory.map((s, i) => (
+              <Text key={i} style={styles.row}>
+                {s.date}: {s.from} → {s.to}: {s.amount}
+              </Text>
+            ))}
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.heading}>Expenses ({data.expenseCount})</Text>
           {data.expenses.map((e, i) => (
             <Text key={i} style={styles.row}>
-              {e.date} — {e.title} (paid by {e.paidBy}): {e.amount}
+              {e.date} — {e.title} ({e.category ?? "—"}, paid by {e.paidBy}): {e.amount}
             </Text>
           ))}
         </View>
+
+        {data.refunds && data.refunds.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.heading}>Refunds</Text>
+            {data.refunds.map((r, i) => (
+              <Text key={i} style={styles.row}>
+                {r.date} — {r.title}: {r.amount}
+              </Text>
+            ))}
+          </View>
+        )}
       </Page>
     </Document>
   )

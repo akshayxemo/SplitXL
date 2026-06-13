@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { format, startOfMonth, endOfMonth, startOfYear, endOfYear } from "date-fns"
+import { Link } from "react-router-dom"
 import {
   PieChart,
   Pie,
@@ -17,16 +18,12 @@ import {
 } from "recharts"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { db } from "@/lib/db"
+import { db, getAccountId, type GroupStatus } from "@/lib/db"
 import { budgetUtilization, formatINR } from "@/lib/money"
-import {
-  applyPaidSettlements,
-  computeNetBalances,
-  simplifyDebts,
-} from "@/lib/settlement"
+import { computeNetBalances, simplifyDebts, sumExpenseTransactions } from "@/lib/settlement"
+import { statusLabel } from "@/lib/group-guards"
 import { useAuthStore } from "@/stores/auth.store"
 import { groupByCategory, groupByMonth, sumExpenses } from "@/features/expenses/expenses.db"
-import { sumGroupExpenses } from "@/features/groups/groups.db"
 
 const CHART_COLORS = [
   "var(--chart-1)",
@@ -36,11 +33,20 @@ const CHART_COLORS = [
   "var(--chart-5)",
 ]
 
+const STATUS_FILTERS: { key: GroupStatus | "all"; label: string }[] = [
+  { key: "all", label: "All Active" },
+  { key: "active", label: "Active" },
+  { key: "settlement_in_progress", label: "Settlement In Progress" },
+  { key: "settled", label: "Settled" },
+  { key: "archived", label: "Archived" },
+]
+
 export function DashboardPage() {
-  const userId = useAuthStore((s) => s.user?.userId)
+  const user = useAuthStore((s) => s.user)
+  const accountId = user ? getAccountId(user) : ""
 
   const data = useLiveQuery(async () => {
-    if (!userId) return null
+    if (!accountId) return null
 
     const now = new Date()
     const monthStart = format(startOfMonth(now), "yyyy-MM-dd")
@@ -48,20 +54,28 @@ export function DashboardPage() {
     const yearStart = format(startOfYear(now), "yyyy-MM-dd")
     const yearEnd = format(endOfYear(now), "yyyy-MM-dd")
 
-    const [personalExpenses, categories, groups, groupMembers, groupExpenses, settlements] =
+    const [personalExpenses, categories, allGroups, groupMembers, transactions] =
       await Promise.all([
-        db.personalExpenses.where("ownerUserId").equals(userId).toArray(),
+        db.personalExpenses.where("ownerAccountId").equals(accountId).toArray(),
         db.categories.toArray(),
-        db.groups.filter((g) => !g.isArchived).toArray(),
+        db.groups.toArray(),
         db.groupMembers.toArray(),
-        db.groupExpenses.toArray(),
-        db.settlements.filter((s) => s.status === "paid").toArray(),
+        db.transactions.toArray(),
       ])
 
     const myGroupIds = new Set(
-      groupMembers.filter((m) => m.userId === userId).map((m) => m.groupId)
+      groupMembers
+        .filter((m) => m.linkedAccountId === accountId && m.isActive)
+        .map((m) => m.groupId)
     )
-    const myGroups = groups.filter((g) => myGroupIds.has(g.id))
+    const myGroups = allGroups.filter((g) => myGroupIds.has(g.id))
+
+    const statusCounts = {
+      active: myGroups.filter((g) => g.status === "active").length,
+      settlement_in_progress: myGroups.filter((g) => g.status === "settlement_in_progress").length,
+      settled: myGroups.filter((g) => g.status === "settled").length,
+      archived: myGroups.filter((g) => g.status === "archived").length,
+    }
 
     const monthExpenses = personalExpenses.filter(
       (e) => e.date >= monthStart && e.date <= monthEnd
@@ -70,7 +84,9 @@ export function DashboardPage() {
       (e) => e.date >= yearStart && e.date <= yearEnd
     )
 
-    const categoryMap = Object.fromEntries(categories.map((c) => [c.id, c.name]))
+    const categoryMap = Object.fromEntries(
+      categories.map((c) => [c.id, `${c.emoji ?? "📁"} ${c.name}`])
+    )
     const byCategory = groupByCategory(monthExpenses)
     const pieData = Object.entries(byCategory).map(([id, value]) => ({
       name: categoryMap[id] ?? "Unknown",
@@ -89,26 +105,28 @@ export function DashboardPage() {
       .map((e) => ({ date: e.date.slice(5), amount: e.amountPaise / 100 }))
 
     let outstandingSettlements = 0
-    for (const group of myGroups) {
+    for (const group of myGroups.filter((g) => g.status !== "archived")) {
       const members = groupMembers.filter((m) => m.groupId === group.id && m.isActive)
-      const expenses = groupExpenses.filter((e) => e.groupId === group.id)
-      const paid = settlements.filter((s) => s.groupId === group.id)
-      const balances = computeNetBalances(expenses, members)
+      const groupTx = transactions.filter((t) => t.groupId === group.id)
+      const balances = computeNetBalances(groupTx, members)
       const debts = simplifyDebts(balances)
-      const remaining = applyPaidSettlements(debts, paid)
-      outstandingSettlements += remaining.reduce((s, d) => s + d.amountPaise, 0)
+      outstandingSettlements += debts.reduce((s, d) => s + d.amountPaise, 0)
     }
 
-    const groupSpending = myGroups.map((g) => {
-      const expenses = groupExpenses.filter((e) => e.groupId === g.id)
-      const spent = sumGroupExpenses(expenses)
-      return {
-        name: g.name,
-        spent: spent / 100,
-        budget: g.budgetPaise ? g.budgetPaise / 100 : null,
-        utilization: budgetUtilization(spent, g.budgetPaise),
-      }
-    })
+    const groupSpending = myGroups
+      .filter((g) => g.status !== "archived")
+      .map((g) => {
+        const groupTx = transactions.filter((t) => t.groupId === g.id)
+        const spent = sumExpenseTransactions(groupTx)
+        return {
+          id: g.id,
+          name: g.name,
+          status: g.status,
+          spent: spent / 100,
+          budget: g.budgetPaise ? g.budgetPaise / 100 : null,
+          utilization: budgetUtilization(spent, g.budgetPaise),
+        }
+      })
 
     const topCategory = pieData.length
       ? pieData.reduce((a, b) => (b.value > a.value ? b : a))
@@ -117,18 +135,16 @@ export function DashboardPage() {
     return {
       monthTotal: sumExpenses(monthExpenses),
       yearTotal: sumExpenses(yearExpenses),
-      groupCount: myGroups.length,
-      groupExpenseTotal: sumGroupExpenses(
-        groupExpenses.filter((e) => myGroupIds.has(e.groupId))
-      ),
+      groupCount: myGroups.filter((g) => g.status !== "archived").length,
       outstandingSettlements,
+      statusCounts,
       pieData,
       barData,
       trendData,
       groupSpending,
       topCategory,
     }
-  }, [userId])
+  }, [accountId])
 
   if (!data) {
     return <p className="text-muted-foreground">Loading dashboard...</p>
@@ -142,13 +158,18 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {STATUS_FILTERS.filter((s) => s.key !== "all").map(({ key, label }) => (
+          <Link key={key} to={`/groups?status=${key}`}>
+            <StatCard title={label} value={String(data.statusCounts[key as keyof typeof data.statusCounts])} />
+          </Link>
+        ))}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="This Month" value={formatINR(data.monthTotal)} />
         <StatCard title="This Year" value={formatINR(data.yearTotal)} />
-        <StatCard title="Groups" value={String(data.groupCount)} />
-        <StatCard
-          title="Outstanding Settlements"
-          value={formatINR(data.outstandingSettlements)}
-        />
+        <StatCard title="Active Groups" value={String(data.groupCount)} />
+        <StatCard title="Outstanding Settlements" value={formatINR(data.outstandingSettlements)} />
       </div>
 
       {data.topCategory && (
@@ -225,9 +246,14 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {data.groupSpending.map((g) => (
-              <div key={g.name} className="space-y-2">
+              <div key={g.id} className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="font-medium">{g.name}</span>
+                  <span className="font-medium">
+                    <Link to={`/groups/${g.id}`} className="hover:text-primary">
+                      {g.name}
+                    </Link>
+                    <span className="ml-2 text-xs text-muted-foreground">{statusLabel(g.status)}</span>
+                  </span>
                   <span>
                     ₹{g.spent.toFixed(2)}
                     {g.budget != null && ` / ₹${g.budget.toFixed(2)}`}
@@ -245,7 +271,7 @@ export function DashboardPage() {
 
 function StatCard({ title, value }: { title: string; value: string }) {
   return (
-    <Card size="sm">
+    <Card size="sm" className="hover:border-primary/50 transition-colors">
       <CardHeader>
         <CardDescription>{title}</CardDescription>
         <CardTitle className="text-xl">{value}</CardTitle>

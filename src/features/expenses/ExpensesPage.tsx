@@ -9,7 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { db } from "@/lib/db"
+import { ConfirmationModal } from "@/components/ConfirmationModal"
+import { DateTimePickerModal, formatDateTime } from "@/components/DateTimePickerModal"
+import { db, getAccountId } from "@/lib/db"
 import { formatINR, parseINR } from "@/lib/money"
 import { useAuthStore } from "@/stores/auth.store"
 import { getCategoriesForUser } from "@/features/categories/categories.db"
@@ -18,7 +20,9 @@ import {
   deletePersonalExpense,
   updatePersonalExpense,
   type ExpenseFilters,
+  dateToTransactionDateTime,
 } from "@/features/expenses/expenses.db"
+import { formatCategoryLabel } from "@/features/categories/categories.db"
 
 const emptyForm = {
   title: "",
@@ -29,17 +33,21 @@ const emptyForm = {
 }
 
 export function ExpensesPage() {
-  const userId = useAuthStore((s) => s.user?.userId)!
+  const user = useAuthStore((s) => s.user)!
+  const accountId = getAccountId(user)
   const [filters, setFilters] = useState<ExpenseFilters>({})
   const [form, setForm] = useState(emptyForm)
   const [editId, setEditId] = useState<string | null>(null)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [showDateTimePicker, setShowDateTimePicker] = useState(false)
+  const [transactionDateTime, setTransactionDateTime] = useState(new Date().toISOString())
 
-  const categories = useLiveQuery(() => getCategoriesForUser(userId), [userId])
+  const categories = useLiveQuery(() => getCategoriesForUser(accountId), [accountId])
 
   const expenses = useLiveQuery(async () => {
-    let list = await db.personalExpenses.where("ownerUserId").equals(userId).toArray()
+    let list = await db.personalExpenses.where("ownerAccountId").equals(accountId).toArray()
 
     if (filters.categoryId) list = list.filter((e) => e.categoryId === filters.categoryId)
     if (filters.month) {
@@ -54,9 +62,9 @@ export function ExpensesPage() {
     if (filters.endDate) list = list.filter((e) => e.date <= filters.endDate!)
 
     return list.sort((a, b) => b.date.localeCompare(a.date))
-  }, [userId, filters])
+  }, [accountId, filters])
 
-  const categoryMap = Object.fromEntries((categories ?? []).map((c) => [c.id, c.name]))
+  const categoryMap = Object.fromEntries((categories ?? []).map((c) => [c.id, formatCategoryLabel(c)]))
   const total = (expenses ?? []).reduce((s, e) => s + e.amountPaise, 0)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -85,15 +93,17 @@ export function ExpensesPage() {
           amountPaise,
           categoryId: form.categoryId,
           date: form.date,
+          transactionDateTime,
           notes: form.notes.trim() || undefined,
         })
       } else {
         await addPersonalExpense({
-          ownerUserId: userId,
+          ownerAccountId: accountId,
           title: form.title.trim(),
           amountPaise,
           categoryId: form.categoryId,
           date: form.date,
+          transactionDateTime: transactionDateTime || dateToTransactionDateTime(form.date),
           notes: form.notes.trim() || undefined,
         })
       }
@@ -114,6 +124,7 @@ export function ExpensesPage() {
       date: expense.date,
       notes: expense.notes ?? "",
     })
+    setTransactionDateTime(expense.transactionDateTime)
     setShowForm(true)
   }
 
@@ -206,15 +217,21 @@ export function ExpensesPage() {
                 <Label>Category</Label>
                 <Select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                   <option value="">Select...</option>
-                  {(categories ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label>Date</Label>
-                <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-              </div>
+              {(categories ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{formatCategoryLabel(c)}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Date</Label>
+            <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+          </div>
+          <div>
+            <Label>Date & Time</Label>
+            <Button type="button" variant="outline" className="w-full justify-start" onClick={() => setShowDateTimePicker(true)}>
+              {formatDateTime(transactionDateTime)}
+            </Button>
+          </div>
               <div className="sm:col-span-2">
                 <Label>Notes</Label>
                 <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
@@ -250,11 +267,7 @@ export function ExpensesPage() {
                   <Button variant="ghost" size="icon-sm" onClick={() => startEdit(expense)}>
                     <Pencil className="size-4" />
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => deletePersonalExpense(expense.id)}
-                  >
+                  <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(expense.id)}>
                     <Trash2 className="size-4 text-destructive" />
                   </Button>
                 </div>
@@ -263,6 +276,26 @@ export function ExpensesPage() {
           ))
         )}
       </div>
+
+      <ConfirmationModal
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title="Delete expense?"
+        description="This expense will be permanently removed."
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={async () => {
+          if (deleteId) await deletePersonalExpense(deleteId)
+          setDeleteId(null)
+        }}
+      />
+
+      <DateTimePickerModal
+        open={showDateTimePicker}
+        onOpenChange={setShowDateTimePicker}
+        value={transactionDateTime}
+        onChange={setTransactionDateTime}
+      />
     </div>
   )
 }
