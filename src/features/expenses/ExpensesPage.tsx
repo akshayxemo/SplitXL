@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
-import { format } from "date-fns"
 import { Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,7 +9,7 @@ import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { ConfirmationModal } from "@/components/ConfirmationModal"
-import { DateTimePickerModal, formatDateTime } from "@/components/DateTimePickerModal"
+import { DateTimePickerModal, formatDateTime, isoToDateString } from "@/components/DateTimePickerModal"
 import { db, getAccountId } from "@/lib/db"
 import { formatINR, parseINR } from "@/lib/money"
 import { useAuthStore } from "@/stores/auth.store"
@@ -20,7 +19,6 @@ import {
   deletePersonalExpense,
   updatePersonalExpense,
   type ExpenseFilters,
-  dateToTransactionDateTime,
 } from "@/features/expenses/expenses.db"
 import { formatCategoryLabel } from "@/features/categories/categories.db"
 
@@ -28,7 +26,6 @@ const emptyForm = {
   title: "",
   amount: "",
   categoryId: "",
-  date: format(new Date(), "yyyy-MM-dd"),
   notes: "",
 }
 
@@ -92,7 +89,7 @@ export function ExpensesPage() {
           title: form.title.trim(),
           amountPaise,
           categoryId: form.categoryId,
-          date: form.date,
+          date: isoToDateString(transactionDateTime),
           transactionDateTime,
           notes: form.notes.trim() || undefined,
         })
@@ -102,8 +99,8 @@ export function ExpensesPage() {
           title: form.title.trim(),
           amountPaise,
           categoryId: form.categoryId,
-          date: form.date,
-          transactionDateTime: transactionDateTime || dateToTransactionDateTime(form.date),
+          date: isoToDateString(transactionDateTime),
+          transactionDateTime,
           notes: form.notes.trim() || undefined,
         })
       }
@@ -121,7 +118,6 @@ export function ExpensesPage() {
       title: expense.title,
       amount: (expense.amountPaise / 100).toFixed(2),
       categoryId: expense.categoryId,
-      date: expense.date,
       notes: expense.notes ?? "",
     })
     setTransactionDateTime(expense.transactionDateTime)
@@ -155,7 +151,7 @@ export function ExpensesPage() {
             >
               <option value="">All</option>
               {(categories ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>{formatCategoryLabel(c)}</option>
               ))}
             </Select>
           </div>
@@ -221,10 +217,6 @@ export function ExpensesPage() {
                 <option key={c.id} value={c.id}>{formatCategoryLabel(c)}</option>
               ))}
             </Select>
-          </div>
-          <div>
-            <Label>Date</Label>
-            <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </div>
           <div>
             <Label>Date & Time</Label>

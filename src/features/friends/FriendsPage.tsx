@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Archive, Trash2 } from "lucide-react"
+import { Archive, Edit2, Eye, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -16,24 +16,45 @@ import {
   deleteFriend,
   getFriends,
   restoreFriend,
+  updateFriend,
 } from "@/features/friends/friends.db"
+import type { Friend } from "@/lib/db"
+
+interface EditState {
+  id: string
+  displayName: string
+  email: string
+  phone: string
+  notes: string
+}
 
 export function FriendsPage() {
   const user = useAuthStore((s) => s.user)!
   const accountId = getAccountId(user)
   const [showArchived, setShowArchived] = useState(false)
+
+  // Add form state
   const [displayName, setDisplayName] = useState("")
   const [email, setEmail] = useState("")
   const [phone, setPhone] = useState("")
   const [notes, setNotes] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [addError, setAddError] = useState<string | null>(null)
+
+  // Edit state
+  const [editState, setEditState] = useState<EditState | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+
+  // View state
+  const [viewFriend, setViewFriend] = useState<Friend | null>(null)
+
+  // Delete state
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const friends = useLiveQuery(() => getFriends(accountId, showArchived), [accountId, showArchived])
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
-    setError(null)
+    setAddError(null)
     try {
       await addFriend({ ownerAccountId: accountId, displayName, email, phone, notes })
       setDisplayName("")
@@ -41,7 +62,36 @@ export function FriendsPage() {
       setPhone("")
       setNotes("")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add friend.")
+      setAddError(err instanceof Error ? err.message : "Failed to add friend.")
+    }
+  }
+
+  function startEdit(friend: Friend) {
+    setEditState({
+      id: friend.id,
+      displayName: friend.displayName,
+      email: friend.email ?? "",
+      phone: friend.phone ?? "",
+      notes: friend.notes ?? "",
+    })
+    setEditError(null)
+    setViewFriend(null)
+  }
+
+  async function handleEditSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editState) return
+    setEditError(null)
+    try {
+      await updateFriend(editState.id, {
+        displayName: editState.displayName,
+        email: editState.email,
+        phone: editState.phone,
+        notes: editState.notes,
+      })
+      setEditState(null)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update friend.")
     }
   }
 
@@ -79,7 +129,7 @@ export function FriendsPage() {
               <Label>Notes</Label>
               <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
-            {error && <p className="text-sm text-destructive sm:col-span-2">{error}</p>}
+            {addError && <p className="text-sm text-destructive sm:col-span-2">{addError}</p>}
             <Button type="submit" className="sm:col-span-2 w-fit">Add Friend</Button>
           </form>
         </CardContent>
@@ -87,30 +137,109 @@ export function FriendsPage() {
 
       <div className="space-y-2">
         {(friends ?? []).map((friend) => (
-          <Card key={friend.id} size="sm">
-            <CardContent className="flex items-center justify-between py-4">
-              <div>
-                <p className="font-medium">{friend.displayName}</p>
-                <p className="text-sm text-muted-foreground">
-                  {[friend.email, friend.phone].filter(Boolean).join(" · ") || "No contact info"}
-                </p>
-                {friend.notes && <p className="text-xs text-muted-foreground mt-1">{friend.notes}</p>}
-              </div>
-              <div className="flex items-center gap-2">
-                {friend.isArchived && <Badge variant="outline">Archived</Badge>}
-                {friend.isArchived ? (
-                  <Button size="sm" variant="outline" onClick={() => restoreFriend(friend.id)}>Restore</Button>
-                ) : (
-                  <Button size="sm" variant="ghost" onClick={() => archiveFriend(friend.id)}>
-                    <Archive className="size-4" />
+          <div key={friend.id} className="space-y-0">
+            <Card size="sm">
+              <CardContent className="flex items-center justify-between py-4">
+                <div>
+                  <p className="font-medium">{friend.displayName}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {[friend.email, friend.phone].filter(Boolean).join(" · ") || "No contact info"}
+                  </p>
+                  {friend.notes && <p className="text-xs text-muted-foreground mt-1">{friend.notes}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {friend.isArchived && <Badge variant="outline">Archived</Badge>}
+                  <Button size="sm" variant="ghost" onClick={() => setViewFriend(viewFriend?.id === friend.id ? null : friend)}>
+                    <Eye className="size-4" />
                   </Button>
-                )}
-                <Button size="sm" variant="ghost" onClick={() => setDeleteId(friend.id)}>
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                  <Button size="sm" variant="ghost" onClick={() => startEdit(friend)}>
+                    <Edit2 className="size-4" />
+                  </Button>
+                  {friend.isArchived ? (
+                    <Button size="sm" variant="outline" onClick={() => restoreFriend(friend.id)}>Restore</Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => archiveFriend(friend.id)}>
+                      <Archive className="size-4" />
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setDeleteId(friend.id)}>
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* View detail panel */}
+            {viewFriend?.id === friend.id && (
+              <Card size="sm" className="border-t-0 rounded-t-none bg-muted/40">
+                <CardContent className="py-4 grid gap-1 text-sm">
+                  <p className="font-semibold mb-1">Friend Details</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <span className="text-muted-foreground">Name</span>
+                    <span>{friend.displayName}</span>
+                    <span className="text-muted-foreground">Email</span>
+                    <span>{friend.email || "—"}</span>
+                    <span className="text-muted-foreground">Phone</span>
+                    <span>{friend.phone || "—"}</span>
+                    <span className="text-muted-foreground">Notes</span>
+                    <span>{friend.notes || "—"}</span>
+                    <span className="text-muted-foreground">Status</span>
+                    <span>{friend.isArchived ? "Archived" : "Active"}</span>
+                    <span className="text-muted-foreground">Created</span>
+                    <span>{new Date(friend.createdAt).toLocaleDateString()}</span>
+                  </div>
+                  <Button size="sm" variant="ghost" className="w-fit mt-2" onClick={() => setViewFriend(null)}>
+                    Close
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Inline edit form */}
+            {editState?.id === friend.id && (
+              <Card size="sm" className="border-t-0 rounded-t-none bg-muted/40">
+                <CardContent className="py-4">
+                  <p className="font-semibold text-sm mb-3">Edit Friend</p>
+                  <form onSubmit={handleEditSave} className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label>Name</Label>
+                      <Input
+                        value={editState.displayName}
+                        onChange={(e) => setEditState({ ...editState, displayName: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Email</Label>
+                      <Input
+                        value={editState.email}
+                        onChange={(e) => setEditState({ ...editState, email: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Phone</Label>
+                      <Input
+                        value={editState.phone}
+                        onChange={(e) => setEditState({ ...editState, phone: e.target.value })}
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label>Notes</Label>
+                      <Textarea
+                        value={editState.notes}
+                        onChange={(e) => setEditState({ ...editState, notes: e.target.value })}
+                      />
+                    </div>
+                    {editError && <p className="text-sm text-destructive sm:col-span-2">{editError}</p>}
+                    <div className="flex gap-2 sm:col-span-2">
+                      <Button type="submit" size="sm">Save</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditState(null)}>Cancel</Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         ))}
       </div>
 

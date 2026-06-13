@@ -52,6 +52,11 @@ export async function archiveCategory(id: string): Promise<void> {
 }
 
 export async function deleteCategory(id: string): Promise<void> {
+  const category = await db.categories.get(id)
+  if (!category) throw new Error("Category not found.")
+  if (category.scope === "global") {
+    throw new Error("System categories cannot be deleted.")
+  }
   const usedInPersonal = await db.personalExpenses.where("categoryId").equals(id).count()
   const usedInTransactions = await db.transactions.where("categoryId").equals(id).count()
   if (usedInPersonal > 0 || usedInTransactions > 0) {

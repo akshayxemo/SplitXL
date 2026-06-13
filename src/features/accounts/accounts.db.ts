@@ -1,4 +1,5 @@
 import { db, type Account } from "@/lib/db"
+import { validateDatabaseIntegrity } from "@/lib/db-integrity"
 
 export function validateContact(email?: string, phone?: string): string | null {
   const hasEmail = !!email?.trim()
@@ -60,4 +61,11 @@ export async function deleteAccountData(accountId: string): Promise<void> {
       await db.accounts.delete(accountId)
     }
   )
+
+  const report = await validateDatabaseIntegrity()
+  if (!report.valid) {
+    const summary = report.issues.map((i) => i.message).join("; ")
+    console.error("Integrity check failed after deleteAccountData:", summary)
+    throw new Error(`Data integrity issues found after account deletion: ${summary}`)
+  }
 }

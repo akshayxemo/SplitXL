@@ -181,6 +181,36 @@ export function validateSplitData(
   }
 }
 
+export interface SettlementProgress {
+  totalDebt: number
+  settledAmount: number
+  remainingAmount: number
+  completionPct: number
+}
+
+export function computeSettlementProgress(
+  transactions: Transaction[],
+  members: GroupMember[]
+): SettlementProgress {
+  // Total debt = sum of all simplified debts derived from balances (before settlements)
+  const expenseAndRefundTx = transactions.filter(
+    (t) => t.type === "expense" || t.type === "refund"
+  )
+  const balancesBeforeSettlements = computeNetBalances(expenseAndRefundTx, members)
+  const debts = simplifyDebts(balancesBeforeSettlements)
+  const totalDebt = debts.reduce((s, d) => s + d.amountPaise, 0)
+
+  // Settled amount = sum of all settlement_payment transactions
+  const settledAmount = transactions
+    .filter((t) => t.type === "settlement_payment")
+    .reduce((s, t) => s + t.amountPaise, 0)
+
+  const remainingAmount = Math.max(0, totalDebt - settledAmount)
+  const completionPct = totalDebt === 0 ? 100 : Math.min(100, (settledAmount / totalDebt) * 100)
+
+  return { totalDebt, settledAmount, remainingAmount, completionPct }
+}
+
 export function getMemberDisplayName(members: GroupMember[], memberId: string): string {
   return members.find((m) => m.id === memberId)?.displayName ?? memberId
 }

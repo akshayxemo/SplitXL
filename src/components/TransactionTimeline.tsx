@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { format } from "date-fns"
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -7,9 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { ConfirmationModal } from "@/components/ConfirmationModal"
 import { formatDateTime } from "@/components/DateTimePickerModal"
 import type { Category, GroupMember, Transaction } from "@/lib/db"
-import { isGroupReadOnly } from "@/lib/group-guards"
 import { formatINR } from "@/lib/money"
-import { getMemberDisplayName } from "@/lib/settlement"
+import { computeShares, getMemberDisplayName } from "@/lib/settlement"
 import { formatCategoryLabel } from "@/features/categories/categories.db"
 
 interface TransactionTimelineProps {
@@ -58,7 +56,7 @@ export function TransactionTimeline({
                   <div>
                     <p className="font-medium">{tx.title}</p>
                     <p className="text-sm text-muted-foreground">
-                      {format(new Date(tx.transactionDateTime), "MMM d, yyyy")} ·{" "}
+                      {formatDateTime(tx.transactionDateTime)} · Paid by{" "}
                       {getMemberDisplayName(members, tx.paidByMemberId)}
                     </p>
                   </div>
@@ -94,6 +92,29 @@ export function TransactionTimeline({
                       {tx.splitMethod.replace(/_/g, " ")}
                     </p>
                   )}
+                  {(tx.type === "expense" || tx.type === "refund") && tx.splitData && (() => {
+                    const shares = computeShares(tx, members)
+                    const participants = members.filter((m) => {
+                      if (tx.splitData?.method === "equal_all") return m.isActive
+                      return (shares[m.id] ?? 0) > 0
+                    })
+                    if (participants.length === 0) return null
+                    return (
+                      <div>
+                        <p className="text-muted-foreground mb-1">Split breakdown:</p>
+                        <table className="w-full text-xs">
+                          <tbody>
+                            {participants.map((m) => (
+                              <tr key={m.id}>
+                                <td className="pr-2">{m.displayName}</td>
+                                <td className="text-right">{formatINR(shares[m.id] ?? 0)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })()}
                   <p>
                     <span className="text-muted-foreground">Type:</span> {tx.type.replace(/_/g, " ")}
                   </p>

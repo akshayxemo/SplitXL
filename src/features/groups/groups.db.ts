@@ -80,6 +80,17 @@ export async function deleteGroup(id: string): Promise<void> {
     await db.categories.filter((c) => c.groupId === id).delete()
     await db.groups.delete(id)
   })
+
+  // Assert no orphaned references remain after deletion
+  const remainingTx = await db.transactions.where("groupId").equals(id).count()
+  const remainingMembers = await db.groupMembers.where("groupId").equals(id).count()
+  const remainingCategories = await db.categories.filter((c) => c.groupId === id).count()
+  if (remainingTx > 0 || remainingMembers > 0 || remainingCategories > 0) {
+    throw new Error(
+      `Cascade delete incomplete for group ${id}: ` +
+        `${remainingTx} transactions, ${remainingMembers} members, ${remainingCategories} categories remain.`
+    )
+  }
 }
 
 export async function getGroupsForAccount(
@@ -186,6 +197,33 @@ export async function addGroupMemberFromFriend(input: {
   }
   await db.groupMembers.add(member)
   return member
+}
+
+export async function updateGroupMember(
+  id: string,
+  changes: Partial<Pick<GroupMember, "displayName" | "email" | "phone">>
+): Promise<void> {
+  const member = await db.groupMembers.get(id)
+  if (!member) throw new Error("Group member not found.")
+
+  const now = new Date().toISOString()
+
+  if (member.linkedFriendId) {
+    // Bidirectional sync: update the friend + all sibling members in a single transaction
+    await db.transaction("rw", db.groupMembers, db.friends, async () => {
+      await db.groupMembers.update(id, { ...changes, updatedAt: now })
+      await db.friends.update(member.linkedFriendId!, { ...changes, updatedAt: now })
+      const siblings = await db.groupMembers
+        .filter((m) => m.linkedFriendId === member.linkedFriendId && m.id !== id)
+        .toArray()
+      for (const sibling of siblings) {
+        await db.groupMembers.update(sibling.id, { ...changes, updatedAt: now })
+      }
+    })
+  } else {
+    // Standalone member — update only this record
+    await db.groupMembers.update(id, { ...changes, updatedAt: now })
+  }
 }
 
 export async function removeGroupMember(id: string): Promise<void> {
