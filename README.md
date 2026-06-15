@@ -1,3 +1,4 @@
+
 # SplitXL
 
 A modern, feature-rich expense tracker and group expense splitter built as a Progressive Web App (PWA). SplitXL helps you track personal expenses, manage group spending, and simplify debt settlements with an intuitive interface and powerful analytics.
@@ -7,6 +8,7 @@ A modern, feature-rich expense tracker and group expense splitter built as a Pro
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+<img width="1917" height="920" alt="Screenshot 2026-06-16 022019" src="https://github.com/user-attachments/assets/9a1a5c87-0301-48c5-9eec-0d47a359b97c" />
 
 ## ✨ Features
 
