@@ -1,8 +1,34 @@
 {
   "name": "split-xl",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.1.1",
   "type": "module",
+  "author": "Akshay Kumar Das <iamakshaykumardas007@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://split-xl.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/akshayxemo/splitxl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/akshayxemo/splitxl/issues"
+  },
+  "keywords": [
+    "expense tracker",
+    "group expense splitter",
+    "debt settlement",
+    "expense tracking",
+    "group expense tracking",
+    "debt settlement",
+    "expense tracking"
+  ],
+  "contributors": [
+    {
+      "name": "Akshay Kumar Das",
+      "email": "iamakshaykumardas007@gmail.com",
+      "url": "https://github.com/akshayxemo"
+    }
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -19,6 +45,7 @@
     "@radix-ui/react-popover": "^1.1.16",
     "@react-pdf/renderer": "^4.5.1",
     "@tailwindcss/vite": "^4.3.0",
+    "@vercel/analytics": "^2.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

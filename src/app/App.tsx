@@ -6,6 +6,7 @@ import { applyTheme, useUIStore } from "@/stores/ui.store"
 import { useAuthStore } from "@/stores/auth.store"
 import { getAccountId } from "@/lib/db"
 import { syncAuthAccount } from "@/lib/db-migrate"
+import { Analytics } from "@vercel/analytics/react"
 
 function App() {
   const theme = useUIStore((s) => s.theme)
@@ -27,6 +28,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <Analytics />
       <AppRoutes />
     </BrowserRouter>
   )
